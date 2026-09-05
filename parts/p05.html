@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P05 Six notes on attention — Let's build GPT, mapped</title>
+<meta name="description" content="What self-attention actually is: message passing on a directed graph, no notion of space, no cross-batch talk, and why we divide by the square root of head_size." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#attention">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 05 · SELF-ATTENTION</span><span class="mono">71:38–79:11 · 8 min</span></div>
+  <h1>Six notes on attention</h1>
+  <div class="authors">Andrej Karpathy · Let's build GPT (2023) · part 05 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/kCc8FmEb1nY?t=4298" target="_blank" rel="noopener">Start this part at 71:38 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L64-L90" target="_blank" rel="noopener">gpt.py · class Head — the six notes annotate exactly these lines ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-4298">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> No code changes in these eight minutes. Having built self-attention in <a class="lnk" href="p04.html">P4</a>, Karpathy stops and says what it <em>is</em>: a communication mechanism between nodes of a directed graph, where every node emits a query and a key, and the edge weights are computed from the data rather than baked in. Everything else about the version you just wrote — the position embeddings, the triangular mask, the fact that queries, keys and values all come from the same tensor, the mysterious <span class="mono">* head_size**-0.5</span> — is a <em>choice</em>, and each of the six notes names one choice and what happens if you make it differently. The one to carry: attention has no built-in notion of space, of causality, or of "self"; those come from the mask, the position embedding, and where you source K and V.</div>
+
+  <p class="lead">This is the part of the lecture that turns a working block of PyTorch into a mental model. In <a class="lnk" href="p04.html">P4</a> you watched <span class="mono">wei</span> go from a constant lower-triangular average to a data-dependent matrix of query·key affinities, and you saw values get aggregated instead of raw embeddings. That's the mechanism. But a mechanism you can only run is not a mechanism you can modify, and the next thirty minutes of the video (<a class="lnk" href="p06.html">P6</a>) will modify it hard — four heads in parallel, a feed-forward on top, residuals around both. So Karpathy pauses and draws the boundary between the operation and its costume: six short notes, each isolating one thing you could change without attention noticing.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4298" target="_blank" rel="noopener">71:38</a> — Note 1, attention is communication: nodes in a directed graph, each aggregating a weighted sum from whoever points at it.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4326" target="_blank" rel="noopener">72:06</a> — The graph <em>we</em> have: eight nodes, node 1 sees itself, node 8 sees everyone — a triangular DAG, one of infinitely many attention could run on.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4366" target="_blank" rel="noopener">72:46</a> — Note 2, no notion of space: attention acts over a <em>set</em>, unlike convolution, which is why position had to be added by hand in P3.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4420" target="_blank" rel="noopener">73:40</a> — Note 3, no communication across the batch dimension: four independent pools of eight nodes, thirty-two nodes total, zero edges between pools.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4454" target="_blank" rel="noopener">74:14</a> — Note 4, encoder vs. decoder blocks: delete one line and every node talks to every node; keep it and the future stays hidden.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4539" target="_blank" rel="noopener">75:39</a> — Note 5, self- vs. cross-attention: it's "self" only because Q, K and V are all read off the same <span class="mono">x</span>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4616" target="_blank" rel="noopener">76:56</a> — Note 6, "scaled" attention: unit-variance q and k give <span class="mono">wei</span> a variance on the order of <span class="mono">head_size</span>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4663" target="_blank" rel="noopener">77:43</a> — Why the softmax cares: diffuse logits in, diffuse distribution out.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4693" target="_blank" rel="noopener">78:13</a> — The sharpening demo: multiply the logits by eight and softmax collapses toward a one-hot vector.</li>
+  </ul>
+
+  <h2>Note 1 — attention is message passing, and the graph is an input</h2>
+
+  <p>The framing that unlocks the rest: forget sequences for a moment and picture a directed graph. Every node holds a vector. Every node also advertises two things — a <b>query</b>, "here is what I'm looking for", and a <b>key</b>, "here is what I contain" — and the strength of the edge from node <i>j</i> to node <i>i</i> is the dot product of <i>i</i>'s query with <i>j</i>'s key. Normalise those strengths over <i>i</i>'s in-neighbours, and each node updates itself with the weighted sum of the <b>values</b> its neighbours are willing to broadcast.</p>
+
+  <blockquote class="q off">Attention is a communication mechanism.<span class="cite">Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=4298" target="_blank" rel="noopener">71:38</a></span></blockquote>
+
+  <p>Nothing in that description mentions text, order, or time. The graph is a parameter of the problem, not of the model: attention is defined for any set of nodes and any pattern of edges you care to allow. What the lecture's code happens to instantiate is one particular, very rigid graph — the autoregressive one. With <span class="mono">block_size = 8</span> in the notebook, node 1 has exactly one in-edge (itself), node 2 has two, node 8 has eight. That's the lower-triangular pattern, and it lives in the model only as a <span class="mono">tril</span> buffer that decides which entries of <span class="mono">wei</span> get set to <span class="mono">-inf</span> before the softmax. Swap that buffer for a different 0/1 matrix and you have a different graph, with the same weights, the same shapes, and the same training loop.</p>
+
+  <p>This is worth internalising because it is the fork in the road that produced the whole zoo. Bidirectional encoders (BERT-style) use the all-ones matrix. Sliding-window attention uses a band. Prefix-LM uses a matrix that is dense in the prompt region and triangular after it. None of those are new operations; they are new masks.</p>
+
+  <h2>Notes 2 and 3 — the two things attention genuinely cannot do</h2>
+
+  <p>Note 2 is the sharpest one, and it explains a piece of P3 that can otherwise feel arbitrary. A convolution has spatial structure welded into it: a 3×3 filter <em>means</em> "left neighbour, me, right neighbour", and moving a pixel changes the answer. Self-attention has no such thing. The softmax-weighted sum is permutation-equivariant over the time axis — shuffle the tokens and the outputs come back shuffled the same way, unchanged in content. The model is looking at an unordered bag of vectors.</p>
+
+  <p>Which is exactly why <span class="mono">position_embedding_table</span> exists. In P3 Karpathy added a second embedding table indexed by <span class="mono">torch.arange(T)</span> and summed it into the token embeddings, and at the time it looked like a small nicety. It isn't: without it the model literally cannot tell "abc" from "cba", because the only thing carrying order was thrown away the moment we started doing weighted sums over a set.</p>
+
+  <p>One honest wrinkle Karpathy skips. The causal mask is itself indexed by position, so a decoder-only stack is not <em>fully</em> position-blind: token <i>i</i> can attend to exactly <i>i</i>+1 predecessors, and that count is a weak positional signal a network can learn to exploit. Later work found that decoder-only Transformers train tolerably with no explicit position encoding at all for this reason. The note is still the right note — attention proper has no notion of space — but the mask leaks a little of it back in.</p>
+
+  <p>Note 3 is smaller and is really a shape-reading exercise. The batch dimension is inert. <span class="mono">wei</span> has shape <span class="mono">(B, T, T)</span>, and the matmuls that produce and consume it are batched matmuls: PyTorch runs <span class="mono">B</span> independent <span class="mono">(T, T)</span> problems in parallel and never mixes them. In the notebook's directed-graph picture that means not one graph of eight nodes but four separate graphs of eight nodes each — thirty-two nodes, twenty-eight of which any given node is forbidden from ever seeing.</p>
+
+  <table class="kv">
+    <tr><th>Tensor</th><th>Shape (notebook, v4)</th><th>Shape (final gpt.py, per head)</th><th>What it is</th></tr>
+    <tr><td><span class="mono">x</span></td><td><span class="mono">(4, 8, 32)</span></td><td><span class="mono">(64, 256, 384)</span></td><td>B, T, C — token + position embeddings</td></tr>
+    <tr><td><span class="mono">k, q, v</span></td><td><span class="mono">(4, 8, 16)</span></td><td><span class="mono">(64, 256, 64)</span></td><td>three bias-free linear projections of <span class="mono">x</span></td></tr>
+    <tr><td><span class="mono">wei</span></td><td><span class="mono">(4, 8, 8)</span></td><td><span class="mono">(64, 256, 256)</span></td><td>affinities; row <i>i</i> is a distribution over <i>j</i> ≤ <i>i</i></td></tr>
+    <tr><td><span class="mono">tril[:T,:T]</span></td><td><span class="mono">(8, 8)</span></td><td><span class="mono">(256, 256)</span></td><td>not a parameter; broadcast across B</td></tr>
+    <tr><td><span class="mono">out</span></td><td><span class="mono">(4, 8, 16)</span></td><td><span class="mono">(64, 256, 64)</span></td><td>head output — <span class="mono">head_size</span> wide, not <span class="mono">C</span></td></tr>
+  </table>
+
+  <p>Note the asymmetry that makes note 3 non-trivial rather than obvious: <span class="mono">tril</span> is shared across the batch and constant across training, while <span class="mono">wei</span> is different for every one of the <span class="mono">B</span> sequences and changes every step. The mask says which edges may exist; the data says how much each one carries. And because nothing crosses the batch, any layer that <em>does</em> mix across batch — BatchNorm, most obviously — would be a genuinely different kind of object here. That's a quiet setup for the LayerNorm discussion in <a class="lnk" href="p06.html">P6</a>.</p>
+
+  <h2>Note 4 — encoder and decoder blocks differ by one line</h2>
+
+  <p>If you want every token to see every other token — you're classifying the sentiment of a whole sentence, say, and there is no "future" to protect — you delete the <span class="mono">masked_fill</span>. That's the entire difference. Karpathy's terminology follows the original paper: a block with the triangular mask is a <b>decoder</b> block (it decodes autoregressively, so it must not see ahead), and one without is an <b>encoder</b> block.</p>
+
+  <blockquote class="q off">Attention supports arbitrary connectivity between nodes.<span class="cite">Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=4509" target="_blank" rel="noopener">75:09</a></span></blockquote>
+
+  <p>Why the mask is load-bearing here and not just a design flourish: recall from P1 that the targets <span class="mono">y</span> are the inputs <span class="mono">x</span> shifted left by one. Position <i>i</i>'s label <em>is</em> token <i>i</i>+1. If position <i>i</i> may attend to position <i>i</i>+1, the answer is sitting in the input. Training loss will fall through the floor, validation loss will follow it — because validation is scored the same leaky way — and generation, which has no future to peek at, will produce noise. This is the single most common way people break the model while "just experimenting", and it fails silently and impressively.</p>
+
+  <p>Two things the "one line" framing glosses over, worth knowing before you go read a real encoder-decoder implementation. First, a full encoder-decoder Transformer differs by more than the mask: the decoder carries a <em>third</em> sublayer, cross-attention into the encoder's output, which the lecture's model never grows. Second, real encoders still use masks — just padding masks, zeroing out attention to filler positions in variable-length batches. Karpathy's dataset has fixed-length chunks, so the issue never arises here.</p>
+
+  <h2>Note 5 — "self" is a statement about where Q, K and V come from</h2>
+
+  <p>In <span class="mono">Head.forward</span>, all three projections are applied to the same argument: <span class="mono">self.key(x)</span>, <span class="mono">self.query(x)</span>, <span class="mono">self.value(x)</span>. One tensor in, three views out, nodes talking to themselves as a group. That, and only that, is what makes it <em>self</em>-attention.</p>
+
+  <p>Break the tie and you get cross-attention: queries from one stream, keys and values from another. The rule that keeps it straight — <b>queries come from the stream you are writing into; keys and values come from the stream you are reading from.</b> A translation decoder produces its queries from the partial output it has generated so far and reads keys and values off the encoded source sentence. A vision-language model produces queries from text tokens and reads image patches. The mechanism is byte-for-byte the same; the two <span class="mono">nn.Linear</span> calls just take a different argument.</p>
+
+  <p>The shape consequence is the one people trip on. In self-attention <span class="mono">wei</span> is square, <span class="mono">(B, T, T)</span>, because the query set and the key set are the same set. In cross-attention it is <span class="mono">(B, T_q, T_kv)</span> — a rectangle, one row per node you're updating, one column per node you're reading. A triangular mask is meaningless on a rectangle and is normally absent: there is no ordering relationship between "the fourth word I'm generating" and "the ninth patch of the image".</p>
+
+  <div class="callout">The carry-away for all five notes so far: <b>attention itself is one line — a softmax over scaled dot products, times values.</b> Causality is the mask. Order is the position embedding. "Self" is an argument-passing decision. Batch independence is free. Every architecture variant you'll meet later is a different setting of those dials, not a different mechanism, which is why the code in <span class="mono">Head</span> barely changes as the models get enormous.</div>
+
+  <h2>Note 6 — why <span class="mono">* head_size**-0.5</span>, in numbers</h2>
+
+  <p>The last note is the one with actual arithmetic behind it, and it's the reason the paper says "Scaled Dot-Product Attention" rather than just "Dot-Product Attention". Take q and k to be roughly unit-Gaussian — zero mean, unit variance per channel — which is approximately true at initialisation with sensible init. Their dot product sums <span class="mono">head_size</span> independent products of unit-variance terms, so its variance is on the order of <span class="mono">head_size</span>: 16 in the notebook, 64 in the final <span class="mono">gpt.py</span>, 128 in GPT-3-scale models. Multiplying by <span class="mono">head_size**-0.5</span> divides the variance by <span class="mono">head_size</span> and puts it back at 1, independently of how wide you made the head.</p>
+
+  <p>Why unit variance rather than any other constant: <span class="mono">wei</span> feeds a softmax, and softmax's sharpness is set by the <em>scale</em> of its inputs, not their pattern. Logits near zero come out near uniform; multiply the same logits by eight and softmax converges toward a one-hot vector, putting essentially all mass on the single largest entry. A head whose attention is one-hot at initialisation is a head that copies one neighbour instead of averaging its neighbourhood — it has thrown away the aggregation that makes attention useful before the first gradient step, and the gradients that reach the non-selected entries are vanishing.</p>
+
+  <p>Numbers, from sampling q, k ~ N(0,1) with T = 8 and applying the causal mask, then measuring how much probability mass the last row's softmax puts on its single largest entry (uniform over eight would be 0.125):</p>
+
+  <table class="kv">
+    <tr><th>head_size</th><th>var(wei) unscaled</th><th>peak mass, unscaled</th><th>var(wei) scaled</th><th>peak mass, scaled</th></tr>
+    <tr><td><span class="mono">16</span> (notebook)</td><td>16.0</td><td>0.75</td><td>1.00</td><td>0.36</td></tr>
+    <tr><td><span class="mono">64</span> (final gpt.py)</td><td>64.0</td><td>0.88</td><td>1.00</td><td>0.36</td></tr>
+    <tr><td><span class="mono">256</span></td><td>256.0</td><td>0.94</td><td>1.00</td><td>0.36</td></tr>
+  </table>
+
+  <p>Read the two right-hand columns as the point of the whole note: with the scaling, the initial attention distribution is the same shape no matter how wide the head is. Without it, widening the head silently sharpens attention — a hyperparameter change quietly becoming an initialisation change, which is exactly the kind of coupling that makes deep networks refuse to train and gives you nothing to debug.</p>
+
+  <pre class="code-block"><code># the argument, reproduced in four lines
+q = torch.randn(B, T, head_size)
+k = torch.randn(B, T, head_size)
+wei = q @ k.transpose(-2, -1)                      # wei.var() ~ head_size
+wei = q @ k.transpose(-2, -1) * head_size**-0.5    # wei.var() ~ 1</code></pre>
+
+  <blockquote class="q off">The scaling is used just to control the variance at initialization.<span class="cite">Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=4724" target="_blank" rel="noopener">78:44</a></span></blockquote>
+
+  <p>Notice the hedge, and take it seriously: <em>at initialization</em>. Nothing constrains q and k to stay unit-Gaussian once training starts — the projections are learned, and a head is perfectly free to grow its weights and sharpen its own attention, which is often what you want a trained head to do. The <span class="mono">1/√d_k</span> is not a running normaliser; it is a one-time choice of units that stops the model from starting in a degenerate place. Modern stacks that train at scales where even this isn't enough add an actual normaliser — QK-Norm, applying LayerNorm to q and k before the dot product — precisely because the initialisation-time argument doesn't cover step 50,000.</p>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <p>These eight minutes change no code — they annotate code you already wrote in P4. Here is the class as it appears in the finished <span class="mono">gpt.py</span>, with each of the six notes pointing at its line:</p>
+
+  <pre class="code-block"><code>class Head(nn.Module):
+    """ one head of self-attention """
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # input of size (batch, time-step, channels)
+        # output of size (batch, time-step, head size)
+        B,T,C = x.shape
+        k = self.key(x)   # (B,T,hs)
+        q = self.query(x) # (B,T,hs)
+        # compute attention scores ("affinities")
+        wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -&gt; (B, T, T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
+        wei = F.softmax(wei, dim=-1) # (B, T, T)
+        wei = self.dropout(wei)
+        # perform the weighted aggregation of the values
+        v = self.value(x) # (B,T,hs)
+        out = wei @ v # (B, T, T) @ (B, T, hs) -&gt; (B, T, hs)
+        return out</code></pre>
+
+  <p>Line by line, against the notes (<a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L64-L90" target="_blank" rel="noopener">gpt.py L64–L90</a>):</p>
+
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L69-L71" target="_blank" rel="noopener">L69–71</a> — three <span class="mono">nn.Linear(n_embd, head_size, bias=False)</span>. All three are applied to the same <span class="mono">x</span> in <span class="mono">forward</span>: that is note 5's definition of "self". Biases are off because a per-channel constant added to every node's key or query shifts all affinities in that row by the same amount, which softmax then cancels; it would only waste parameters.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L72" target="_blank" rel="noopener">L72</a> — <span class="mono">register_buffer('tril', …)</span>. This is note 1's graph and note 4's encoder/decoder switch, stored as state that moves with <span class="mono">.to(device)</span> and gets saved in the state dict but receives no gradient. It is allocated at full <span class="mono">block_size</span> and sliced to <span class="mono">[:T, :T]</span> at use, so shorter contexts (the first few steps of <span class="mono">generate</span>) work unchanged.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L83" target="_blank" rel="noopener">L83</a> — the scaled dot product, note 6. <span class="mono">k.shape[-1]</span> is <span class="mono">head_size</span>, not <span class="mono">C</span>; in the video Karpathy first typed <span class="mono">C</span> and corrects it in the video's pinned errata at 1:20:05. With one head where <span class="mono">head_size == n_embd</span> the two coincide, which is why the bug is invisible until P6 splits the embedding across four heads.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L84-L85" target="_blank" rel="noopener">L84–85</a> — <span class="mono">masked_fill</span> then <span class="mono">softmax(dim=-1)</span>. <span class="mono">-inf</span> is the identity element for this pair: <span class="mono">exp(-inf) = 0</span>, so masked entries contribute nothing and the surviving entries in each row still normalise to 1. <span class="mono">dim=-1</span> matters — normalising over the wrong axis produces columns that sum to one and a model that trains to nonsense.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L86" target="_blank" rel="noopener">L86</a> — dropout on the attention matrix. Not yet present at this point in the lecture; it arrives with the scale-up in <a class="lnk" href="p07.html">P7</a>. Randomly zeroing entries of <span class="mono">wei</span> is dropping edges of the graph during training.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L88-L89" target="_blank" rel="noopener">L88–89</a> — the aggregation. <span class="mono">(B,T,T) @ (B,T,hs) -&gt; (B,T,hs)</span>: the output is <span class="mono">head_size</span> wide, not <span class="mono">C</span> wide, which is what makes concatenating four heads back to <span class="mono">C</span> work in P6.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"If attention has no notion of space, why does the mask work?"</b> Because the mask is not part of attention — it is a position-indexed object we bolt on. Attention proper is permutation-equivariant over T; the mask and the position embedding are the two places order enters the model. If you shuffle your tokens and shuffle <span class="mono">tril</span> identically, you get the same answers back, shuffled. The consequence people miss: the mask leaks a small amount of position information (how many predecessors a token has) even with the position embedding removed.</li>
+    <li><b>Deleting the mask "to try an encoder" and watching the loss collapse to near zero.</b> This looks like a triumph and is a leak: targets are inputs shifted by one, so an unmasked position reads its own label. Validation loss drops too, since validation is scored the same way, so the usual overfitting alarm doesn't fire. The tell is generation — sampling has no future to read, so text quality falls off a cliff while the numbers look superb. Encoder blocks are correct for classifying a whole sequence; they are not correct for next-token prediction.</li>
+    <li><b>Normalising by <span class="mono">C</span> instead of <span class="mono">head_size</span>.</b> Karpathy makes this exact slip on camera (corrected in the video description at 1:20:05) and the final <span class="mono">gpt.py</span> has it right as <span class="mono">k.shape[-1]**-0.5</span>. It is invisible in the single-head model where the two are equal and becomes a real 2× error the moment you split 384 channels across 6 heads of 64. Rule: the scale is always the dimension you summed over.</li>
+    <li><b>Which side gives Q and which gives K/V in cross-attention.</b> Queries come from the nodes being updated; keys and values from the nodes being read. Check yourself on shapes: <span class="mono">wei</span> must be <span class="mono">(B, T_q, T_kv)</span> and the output must have <span class="mono">T_q</span> rows, matching the stream you are writing into. If your output length changed, you have them backwards.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Attention Is All You Need</a> — Vaswani et al. (2017) · §3.2.1 is note 6 in its original form, including the footnote with the same unit-variance argument; §3.2.3 enumerates the three places attention is used, which is note 5's encoder-decoder cross-attention.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L64-L90" target="_blank" rel="noopener">ng-video-lecture · gpt.py, class Head</a> — Karpathy (2023) · the 27 lines all six notes are about; the finished version, so it also carries the dropout that arrives in P7.</li>
+    <li><a href="https://github.com/karpathy/nanoGPT/blob/master/model.py#L52-L76" target="_blank" rel="noopener">nanoGPT · CausalSelfAttention.forward</a> — Karpathy (2023) · the same operation written for real: heads folded into the batch dimension, the mask registered as <span class="mono">bias</span>, and a fast path that hands the whole thing to <span class="mono">F.scaled_dot_product_attention(…, is_causal=True)</span>. Line 67 is L83 above with <span class="mono">math.sqrt</span> spelled out.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html" target="_blank" rel="noopener">torch.nn.functional.scaled_dot_product_attention</a> — PyTorch docs · note 4 and note 6 as API surface: <span class="mono">is_causal</span> is the triangular mask, <span class="mono">scale</span> defaults to <span class="mono">1/√E</span>, and passing separate <span class="mono">key</span>/<span class="mono">value</span> tensors is note 5.</li>
+    <li><a href="https://arxiv.org/abs/1810.04805" target="_blank" rel="noopener">BERT: Pre-training of Deep Bidirectional Transformers</a> — Devlin et al. (2018) · <em>field map extra</em>. What note 4's encoder branch turns into: no causal mask, so the training objective has to change too (masked-token prediction instead of next-token). The clean demonstration that the mask and the objective are one decision, not two.</li>
+    <li><a href="https://arxiv.org/abs/2204.14198" target="_blank" rel="noopener">Flamingo: a Visual Language Model for Few-Shot Learning</a> — Alayrac et al. (2022) · <em>field map extra</em>. Note 5 at industrial scale: gated cross-attention layers interleaved into a frozen language model, queries from text, keys and values from vision. Read it for the Q-from-here / KV-from-there pattern rather than the vision specifics.</li>
+    <li><a href="https://arxiv.org/abs/2302.05442" target="_blank" rel="noopener">Scaling Vision Transformers to 22 Billion Parameters</a> — Dehghani et al. (2023) · <em>field map extra</em>. Where note 6's hedge bites: §2.1 adds QK-Norm (LayerNorm on q and k before the dot product) after attention logits blew up mid-training, which the initialisation-time <span class="mono">1/√d_k</span> argument does not prevent. Now standard in large training recipes.</li>
+    <li><a href="https://arxiv.org/abs/1710.10903" target="_blank" rel="noopener">Graph Attention Networks</a> — Veličković et al. (2017) · <em>field map extra</em>. Note 1 taken literally: the same attention aggregation on explicit graphs with arbitrary adjacency. Useful for seeing that the sequence case is the special case.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Break the mask on purpose</b><span class="code">code</span> — in the <a href="https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing" target="_blank" rel="noopener">Colab</a>, comment out the <span class="mono">masked_fill</span> line and retrain the single-head model for the same number of steps. (1) Record train and val loss. (2) Generate 300 characters. (3) Explain in one sentence why the loss is far lower and the text far worse. (4) Now keep the mask but shift <span class="mono">y</span> by two instead of one in <span class="mono">get_batch</span> and predict two tokens ahead — does the mask still leak? A good answer names the shifted-targets relationship explicitly and states which of loss and sample quality you should trust when they disagree.</li>
+    <li><b>Measure the variance argument yourself</b><span class="code">code</span> — sample <span class="mono">q, k = torch.randn(B, T, hs)</span> for <span class="mono">hs</span> in {16, 64, 256}. (1) Print <span class="mono">wei.var()</span> with and without <span class="mono">* hs**-0.5</span>. (2) Apply the causal mask and softmax, then print the mean of the largest probability in the last row. (3) Plot peak mass against <span class="mono">hs</span> for both. (4) Repeat with q and k scaled by 3 to simulate a trained model. You should reproduce the table above — roughly 0.36 peak mass at every head size when scaled, climbing toward 1.0 when not — and see that the scaling fixes the width dependence, not the magnitude of trained weights.</li>
+    <li><b>Turn the head into a cross-attention head</b><span class="code">code</span> — write <span class="mono">CrossHead.forward(self, x, context)</span> that takes queries from <span class="mono">x</span> and keys/values from <span class="mono">context</span>, with no mask. (1) Assert the shape of <span class="mono">wei</span> is <span class="mono">(B, T_q, T_kv)</span> for <span class="mono">T_q != T_kv</span>. (2) Confirm the output has <span class="mono">T_q</span> rows. (3) Say in one line why <span class="mono">tril</span> cannot be applied here. A good answer notes that <span class="mono">Head</span> and <span class="mono">CrossHead</span> differ only in the argument passed to two <span class="mono">nn.Linear</span> calls.</li>
+  </ol>
+  <p>None of Karpathy's own EX1–EX4 belongs to this part — EX1 (batched heads) lands in <a class="lnk" href="p07.html">P7</a>, and the rest are whole-model exercises. Exercise 3 above is a decent warm-up for EX4 if you plan to implement a cross-attending variant.</p>
+
+  <div class="callout">Next: <a class="lnk" href="p06.html">P06 Assembling the block: heads, feed-forward, residuals, LayerNorm</a> · Back to the <a class="lnk" href="../index.html#attention">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023), part 05. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

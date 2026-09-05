@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P02 The bigram baseline: model, loss, generation, training — Let's build GPT, mapped</title>
+<meta name="description" content="A 65x65 lookup table is already a language model: cross-entropy, sampling, and the AdamW loop that every later version reuses unchanged." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#baseline">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 02 · BASELINE</span><span class="mono">22:11–42:13 · 20 min</span></div>
+  <h1>The bigram baseline: model, loss, generation, training</h1>
+  <div class="authors">Andrej Karpathy · Let's build GPT (2023) · part 02 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/kCc8FmEb1nY?t=1331" target="_blank" rel="noopener">Start this part at 22:11 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L60" target="_blank" rel="noopener">bigram.py · the whole 122-line script this part ends at ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-1331">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> The simplest thing that counts as a language model is a table: one row per token, and that row <em>is</em> the score vector for what comes next. Karpathy builds it in about ten minutes, and the other ten are spent on the scaffolding around it — cross-entropy with PyTorch's awkward channels-second convention, a <span class="mono">generate()</span> loop that samples one character at a time, and an AdamW training loop that drops the loss from 4.87 to about 2.5. Almost none of that scaffolding changes again. By the end of the lecture the model class has grown from six lines to a hundred and fifty, and the loss function, the sampler and the training loop are still, character for character, what he wrote here. Remember the shape <span class="mono">(B, T, C)</span> and remember that the whole rest of the video is about making <span class="mono">C</span> stop being "one row per token identity."</div>
+
+  <p class="lead">Part 1 ended with a batch: an integer tensor <span class="mono">x</span> of shape <span class="mono">(4, 8)</span> and a target tensor <span class="mono">y</span> of the same shape, holding 32 independent next-character prediction problems. This part answers the obvious next question — what is the smallest neural network you can feed that into and get a trained, sampling language model out the other end? — and the answer is deliberately, almost insultingly small. That is the point. A baseline you fully understand is a fixed reference for everything that follows: when self-attention arrives at 62:00 and drops validation loss from 2.5 to 2.0, the only reason that number means anything is that you know exactly what the 2.5 model was doing.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1331" target="_blank" rel="noopener">22:11</a> — <b>The bigram model as a lookup table</b>: <span class="mono">nn.Embedding(vocab_size, vocab_size)</span>, and why an embedding table can be read directly as logits.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1422" target="_blank" rel="noopener">23:42</a> — <b>(B, T, C)</b>: indexing a table with a <span class="mono">(4, 8)</span> integer tensor returns <span class="mono">(4, 8, 65)</span>. The naming convention for the whole lecture is set here.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1482" target="_blank" rel="noopener">24:42</a> — <b>Cross-entropy as the score</b>: negative log likelihood, and what "good logits" means numerically.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1574" target="_blank" rel="noopener">26:14</a> — <b>The shape argument</b>: PyTorch wants channels second, so the batch and time axes get flattened into one with <span class="mono">.view()</span>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1697" target="_blank" rel="noopener">28:17</a> — <b>Sanity-checking the loss</b>: uniform over 65 symbols is <span class="mono">ln 65 = 4.17</span>; the real initial loss is 4.87, and the gap is informative.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1727" target="_blank" rel="noopener">28:47</a> — <b>generate()</b>: the autoregressive loop — forward, take the last step, softmax, sample, concatenate.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1884" target="_blank" rel="noopener">31:24</a> — <b>targets=None</b>: the forward pass has to work without labels, so the loss becomes optional.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1946" target="_blank" rel="noopener">32:26</a> — <b>Kicking off from token 0</b>: a <span class="mono">(1, 1)</span> tensor holding a newline is the seed context.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2038" target="_blank" rel="noopener">33:58</a> — <b>Why generate() is overbuilt</b>: it feeds the whole history in and uses only the last position. Wasteful now, correct later.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2093" target="_blank" rel="noopener">34:53</a> — <b>Training</b>: AdamW instead of SGD, a learning rate far above the usual 3e-4, batch size bumped from 4 to 32.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2225" target="_blank" rel="noopener">37:05</a> — <b>Loss ≈ 2.5</b>: the first output that has word-shaped things in it, and the ceiling of what a bigram can do.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2280" target="_blank" rel="noopener">38:00</a> — <b>Port to a script</b>: hyperparameters hoisted to the top, a <span class="mono">device</span> flag, and <span class="mono">estimate_loss()</span> under <span class="mono">@torch.no_grad()</span>.</li>
+  </ul>
+
+  <h2>A language model that is one table</h2>
+
+  <p>A bigram language model says: the probability of the next character depends on the current character and nothing else. That is a claim about a 65 × 65 grid of numbers — one row per current character, 65 scores per row. Karpathy's implementation is exactly that grid, wrapped in <a href="https://pytorch.org/docs/stable/generated/torch.nn.Embedding.html" target="_blank" rel="noopener"><span class="mono">nn.Embedding</span></a>, which is a thin convenience layer over a learnable tensor with integer indexing: <span class="mono">table(idx)</span> is <span class="mono">table.weight[idx]</span> with gradients wired up.</p>
+
+  <p>The line that does the work is <a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L66" target="_blank" rel="noopener"><span class="mono">bigram.py#L66</span></a>: <span class="mono">nn.Embedding(vocab_size, vocab_size)</span>. Both arguments are 65, and it is worth being clear that they are 65 for two unrelated reasons. The <em>first</em> 65 is the number of rows — one per possible input token, because the model looks itself up by identity. The <em>second</em> 65 is the width of each row, and it is 65 because the row is being interpreted as logits over the vocabulary. In this model those two numbers coincide, and the coincidence is what makes the model a bigram model rather than something more expressive. In <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L143" target="_blank" rel="noopener">the final <span class="mono">gpt.py</span></a> the two are pulled apart: the table becomes <span class="mono">nn.Embedding(vocab_size, n_embd)</span> with <span class="mono">n_embd = 384</span>, and a separate <span class="mono">nn.Linear(n_embd, vocab_size)</span> projects back out at the end. Everything between those two layers is the Transformer. Watching that seam open up is one useful way to read the rest of the lecture.</p>
+
+  <p>The whole model has 65 × 65 = 4,225 parameters. For comparison, the model at 97:49 has about 10 million.</p>
+
+  <h2>(B, T, C), and the shape argument you will hit again</h2>
+
+  <p>Indexing the table with the batch produces the tensor naming convention that governs the next ninety minutes. Feed in <span class="mono">idx</span> of shape <span class="mono">(B, T)</span> — batch by time — and PyTorch returns one row per element, giving <span class="mono">(B, T, C)</span>: batch, time, channels. In the notebook that is <span class="mono">(4, 8, 65)</span>; in <span class="mono">bigram.py</span>, with <span class="mono">batch_size = 32</span>, it is <span class="mono">(32, 8, 65)</span>. Karpathy uses B, T and C constantly and rarely re-explains them, so it is worth over-learning them here.</p>
+
+  <p>Then comes the first genuine friction of the video, and it is not conceptual — it is an API convention. <a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.cross_entropy.html" target="_blank" rel="noopener"><span class="mono">F.cross_entropy</span></a> accepts multi-dimensional input, but it expects the class dimension <em>second</em>: <span class="mono">(N, C, d1, ..., dk)</span>. Our logits are <span class="mono">(B, T, C)</span>, with C last. Calling it directly fails.</p>
+
+  <p>There are two ways out. You can transpose to <span class="mono">(B, C, T)</span> and hand PyTorch its preferred layout. Karpathy takes the other route: collapse batch and time into a single flat axis, so the tensor becomes an ordinary 2-D <span class="mono">(N, C)</span> classification problem with N = B·T examples. That reshape is the four lines at <a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L76" target="_blank" rel="noopener"><span class="mono">bigram.py#L76-L79</span></a>. It is the better choice for a teaching codebase, because it makes explicit what is actually going on: the 32 sequences × 8 positions are 256 completely independent supervised examples, and the loss is their mean. Nothing in a decoder-only language model's loss couples one position to another — the coupling all lives in the forward pass.</p>
+
+  <table class="kv">
+    <tr><th>Tensor</th><th>Notebook shape</th><th>bigram.py shape</th><th>What it holds</th></tr>
+    <tr><td><span class="mono">idx</span> / <span class="mono">targets</span></td><td>(4, 8)</td><td>(32, 8)</td><td>integer token ids, 0–64</td></tr>
+    <tr><td><span class="mono">logits</span> out of the table</td><td>(4, 8, 65)</td><td>(32, 8, 65)</td><td>unnormalised next-token scores</td></tr>
+    <tr><td><span class="mono">logits.view(B*T, C)</span></td><td>(32, 65)</td><td>(256, 65)</td><td>one row per training example</td></tr>
+    <tr><td><span class="mono">targets.view(B*T)</span></td><td>(32,)</td><td>(256,)</td><td>the correct class index for each row</td></tr>
+    <tr><td><span class="mono">loss</span></td><td>scalar</td><td>scalar</td><td>mean negative log likelihood</td></tr>
+  </table>
+
+  <p>Note the shadowing at <a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L77" target="_blank" rel="noopener">L77</a>: <span class="mono">logits</span> is rebound to the flattened version, so the tensor the function returns in the training path is 2-D, while in the generation path (no targets) it is 3-D. Nothing downstream cares, because training only reads <span class="mono">loss</span> and generation never passes targets — but it is a real inconsistency in the return type, and it survives unchanged into <span class="mono">gpt.py</span>.</p>
+
+  <h2>What the loss should be, and what it is</h2>
+
+  <p>Before training, the table is random, so the model's predictions ought to be roughly uniform over 65 symbols. The negative log likelihood of a uniform guess is <span class="mono">−ln(1/65) = ln 65 ≈ 4.174</span>. The measured initial loss is 4.87.</p>
+
+  <p>That gap is worth sitting with, because it is the first instance of a diagnostic habit that runs through the whole Zero-to-Hero series: <em>always know what number a broken model should produce.</em> 4.87 &gt; 4.17 means the random initialisation is not uniform — PyTorch initialises <span class="mono">nn.Embedding</span> from a unit normal, so each row has logits spread over roughly ±2, which after softmax is a peaked, confidently-wrong distribution. Confident and wrong scores worse than agnostic. At this scale it costs a few dozen steps of training and nothing more, which is why Karpathy notes it and moves on. At depth it becomes a real problem, and it is exactly why <span class="mono">gpt.py</span> later grows an <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L152" target="_blank" rel="noopener"><span class="mono">_init_weights</span></a> method scaling everything to std 0.02 — a method he flags in a comment as "not covered in the original GPT video."</p>
+
+  <p>The other number worth holding: a bigram model on tiny Shakespeare bottoms out around <b>2.5</b>. That is not a training failure, it is the model class's ceiling. Knowing one character genuinely does not tell you much about the next one.</p>
+
+  <h2>Generation: one character at a time, deliberately overbuilt</h2>
+
+  <p>Sampling is a loop that runs <span class="mono">max_new_tokens</span> times, and each pass does five things: run the forward pass on the current context; slice out the final time step with <span class="mono">logits[:, -1, :]</span>, turning <span class="mono">(B, T, C)</span> into <span class="mono">(B, C)</span>; softmax over the last axis to get probabilities; draw one sample per batch row with <a href="https://pytorch.org/docs/stable/generated/torch.multinomial.html" target="_blank" rel="noopener"><span class="mono">torch.multinomial</span></a>, giving <span class="mono">(B, 1)</span>; concatenate it onto the running sequence along <span class="mono">dim=1</span>, giving <span class="mono">(B, T+1)</span>. The context grows by one every iteration, which is what "autoregressive" means in code.</p>
+
+  <p>Two design choices in that loop deserve calling out. The first is that it <em>samples</em> rather than taking the argmax. Greedy decoding from a bigram table would produce a short cycle almost immediately — the highest-probability successor of the highest-probability successor loops. Sampling is what makes the output look like text-shaped noise instead of <span class="mono">"e the the the"</span>. It is also why the model gives a different answer every run, which Karpathy uses at the very start of the video to explain why ChatGPT does too.</p>
+
+  <p>The second is that <span class="mono">generate()</span> feeds the model the entire accumulated context and then throws away all but the last position's prediction. For a bigram model this is pure waste: only the final character can possibly matter, and by token 300 the model is doing 300 table lookups to use one. Karpathy writes it this way on purpose — he wants the function to be correct without modification once the model does look at history.</p>
+
+  <div class="callout off">The single most transferable thing in this part: <b>everything except the model class is already final.</b> Compare <a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L83" target="_blank" rel="noopener"><span class="mono">bigram.py</span> L83–96</a> with <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L181" target="_blank" rel="noopener"><span class="mono">gpt.py</span> L181–196</a> — the sampling loops are identical apart from one added line, <span class="mono">idx_cond = idx[:, -block_size:]</span>. The loss computation, the <span class="mono">estimate_loss</span> helper, the training loop and the decode-and-print at the bottom are byte-for-byte the same in both files. Ninety minutes of lecture change one class.</div>
+
+  <blockquote class="q">obviously it's garbage and the reason it's garbage is because this is a totally random model
+    <span class="cite">Karpathy on the untrained sample, <a href="https://youtu.be/kCc8FmEb1nY?t=2006" target="_blank" rel="noopener">33:26</a></span></blockquote>
+
+  <h2>The training loop that never changes</h2>
+
+  <p>Four lines, in a fixed order: sample a batch, compute the loss, zero the gradients, backpropagate, step. Karpathy switches from the SGD used in the earlier makemore videos to <a href="https://arxiv.org/abs/1711.05101" target="_blank" rel="noopener">AdamW</a>, which is what everyone actually trains Transformers with, and picks <span class="mono">learning_rate = 1e-2</span> — roughly thirty times the 3e-4 he calls a good default. A 4,225-parameter model can take a learning rate that would destroy a real network; a well-conditioned lookup table is about the easiest optimisation problem there is.</p>
+
+  <p>Which raises a point Karpathy skips past. Gradient descent on this model is unnecessary. The optimum of cross-entropy for a table of independent rows has a closed form: count every bigram in the training text, normalise each row, take the log. That is precisely how the first makemore video does it, and it reaches the same loss in one pass over the data with no optimiser at all. He uses AdamW here because the loop needs to exist for the next ninety minutes, not because the bigram model needs it — the fastest possible route to the correct answer would have taught you nothing reusable. Worth knowing so that "the bigram model was trained by gradient descent" doesn't get filed as a fact about bigram models.</p>
+
+  <blockquote class="q">obviously this is a very simple model because the tokens are not talking to each other
+    <span class="cite">the pivot into self-attention, <a href="https://youtu.be/kCc8FmEb1nY?t=2256" target="_blank" rel="noopener">37:36</a></span></blockquote>
+
+  <h2>What porting to a script actually added</h2>
+
+  <p>The last four minutes convert the notebook into <span class="mono">bigram.py</span>, 122 lines, and three things appear that were not in the notebook.</p>
+
+  <p><b>A device flag.</b> <span class="mono">device = 'cuda' if torch.cuda.is_available() else 'cpu'</span>, and then three places that have to respect it: the batches after they are stacked (<a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L43" target="_blank" rel="noopener">L43</a>), the model's parameters via <span class="mono">model.to(device)</span> (<a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L99" target="_blank" rel="noopener">L99</a>), and the seed context for generation (<a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L121" target="_blank" rel="noopener">L121</a>). Miss any one and you get a device-mismatch error rather than silently wrong results, which is the merciful failure mode. Note that the full dataset stays on the CPU and only each batch is moved — for a 1 MB corpus that is arbitrary, but it is the pattern that scales.</p>
+
+  <p><b>A real evaluation.</b> Printing <span class="mono">loss.item()</span> inside the training loop reports the loss on <em>one</em> batch of 32 sequences, which bounces around by a tenth or more depending on which chunks got sampled. <span class="mono">estimate_loss()</span> averages 200 batches per split and returns both train and validation numbers, so the printed figure moves smoothly and the train/val gap is visible. It costs 400 extra forward passes every 300 steps — about 11 evaluations over the 3,000-step run.</p>
+
+  <p><b>Two correctness wrappers around that evaluation.</b> The <a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.cross_entropy.html" target="_blank" rel="noopener">functional</a> loss doesn't care, but the decorator <span class="mono">@torch.no_grad()</span> tells PyTorch not to build the autograd graph, so no intermediate activations are retained — a pure memory and speed win, with no effect on the numbers. The <span class="mono">model.eval()</span> / <span class="mono">model.train()</span> pair around the loop is a no-op for <em>this</em> model, since it contains only an embedding, and Karpathy says so explicitly. It matters from 97:49 onward, when dropout arrives: dropout must be off during evaluation, and the mode flag is what turns it off. He writes it now so that it is already correct later. This is the same discipline as the overbuilt <span class="mono">generate()</span> — build the scaffolding once, in its final form, while the model is small enough that you can see it is right.</p>
+
+  <table class="kv">
+    <tr><th>Hyperparameter</th><th>bigram.py</th><th>gpt.py (for contrast)</th><th>Why</th></tr>
+    <tr><td><span class="mono">batch_size</span></td><td>32</td><td>64</td><td>notebook used 4; bumped when training starts</td></tr>
+    <tr><td><span class="mono">block_size</span></td><td>8</td><td>256</td><td>irrelevant to a bigram — it only sets how many examples per row</td></tr>
+    <tr><td><span class="mono">max_iters</span></td><td>3000</td><td>5000</td><td>enough for 4,225 parameters to converge</td></tr>
+    <tr><td><span class="mono">eval_interval</span> / <span class="mono">eval_iters</span></td><td>300 / 200</td><td>500 / 200</td><td>11 evaluations, each averaging 200 batches per split</td></tr>
+    <tr><td><span class="mono">learning_rate</span></td><td>1e-2</td><td>3e-4</td><td>tiny model tolerates 30x the usual Transformer LR</td></tr>
+    <tr><td>final loss</td><td>≈ 2.5</td><td>≈ 1.48 val</td><td>the gap self-attention buys you</td></tr>
+  </table>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <p>The model class, plus the training loop and the generation call that surround it. This is <a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L60" target="_blank" rel="noopener"><span class="mono">bigram.py</span> lines 60–122</a>, verbatim.</p>
+
+  <pre class="code-block"><code># super simple bigram model
+class BigramLanguageModel(nn.Module):
+
+    def __init__(self, vocab_size):
+        super().__init__()
+        # each token directly reads off the logits for the next token from a lookup table
+        self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+
+    def forward(self, idx, targets=None):
+
+        # idx and targets are both (B,T) tensor of integers
+        logits = self.token_embedding_table(idx) # (B,T,C)
+
+        if targets is None:
+            loss = None
+        else:
+            B, T, C = logits.shape
+            logits = logits.view(B*T, C)
+            targets = targets.view(B*T)
+            loss = F.cross_entropy(logits, targets)
+
+        return logits, loss
+
+    def generate(self, idx, max_new_tokens):
+        # idx is (B, T) array of indices in the current context
+        for _ in range(max_new_tokens):
+            # get the predictions
+            logits, loss = self(idx)
+            # focus only on the last time step
+            logits = logits[:, -1, :] # becomes (B, C)
+            # apply softmax to get probabilities
+            probs = F.softmax(logits, dim=-1) # (B, C)
+            # sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
+            # append sampled index to the running sequence
+            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+        return idx
+
+model = BigramLanguageModel(vocab_size)
+m = model.to(device)
+
+# create a PyTorch optimizer
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+for iter in range(max_iters):
+
+    # every once in a while evaluate the loss on train and val sets
+    if iter % eval_interval == 0:
+        losses = estimate_loss()
+        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+
+    # sample a batch of data
+    xb, yb = get_batch('train')
+
+    # evaluate the loss
+    logits, loss = model(xb, yb)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+
+# generate from the model
+context = torch.zeros((1, 1), dtype=torch.long, device=device)
+print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))</code></pre>
+
+  <p>Line by line, the parts that are easy to skim past:</p>
+
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L63" target="_blank" rel="noopener"><b>L63</b></a> — <span class="mono">__init__</span> takes <span class="mono">vocab_size</span> as an argument even though it is a module-level global. In <span class="mono">gpt.py</span> the argument is dropped and the global is read directly, which is more consistent with how <span class="mono">n_embd</span> and friends are handled.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L73" target="_blank" rel="noopener"><b>L73–79</b></a> — the branch on <span class="mono">targets is None</span>. This exists solely so that <span class="mono">generate()</span> can call <span class="mono">self(idx)</span> with no labels. It reads as defensive coding but it is load-bearing.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L89" target="_blank" rel="noopener"><b>L89</b></a> — <span class="mono">logits[:, -1, :]</span>. Negative-one indexing on the time axis: the prediction made <em>at</em> the last position is the prediction <em>for</em> the position after it. Off-by-one here is the single most common bug when people reimplement this from memory.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L91" target="_blank" rel="noopener"><b>L91</b></a> — <span class="mono">F.softmax(logits, dim=-1)</span>. The <span class="mono">dim</span> is not optional and not guessable; softmaxing the batch axis by accident produces plausible-looking garbage that trains to nothing.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L98" target="_blank" rel="noopener"><b>L98–99</b></a> — <span class="mono">model</span> and <span class="mono">m</span> are the same object; <span class="mono">.to(device)</span> mutates modules in place and returns self. The two names are an artefact of the notebook, and they persist into <span class="mono">gpt.py</span>.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L116" target="_blank" rel="noopener"><b>L116</b></a> — <span class="mono">zero_grad(set_to_none=True)</span> frees the gradient tensors instead of filling them with zeros. Slightly faster, slightly less memory, and it makes "I forgot to call backward" fail loudly with <span class="mono">None</span> rather than silently with stale zeros.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L121" target="_blank" rel="noopener"><b>L121–122</b></a> — the seed context is a <span class="mono">(1, 1)</span> tensor holding <span class="mono">0</span>, which decodes to a newline because <span class="mono">chars</span> is sorted and newline is the lowest codepoint in tiny Shakespeare. Starting mid-line would work too; newline is just the most natural "beginning of a document" token available when you have no dedicated BOS symbol.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why is the loss averaged over all 8 positions, not just the last one?"</b> — because each of the 8 positions is a separate labelled example. <span class="mono">y</span> is <span class="mono">x</span> shifted one step left, so position <span class="mono">t</span> in a row predicts position <span class="mono">t+1</span>, and a batch of 32 sequences of length 8 is 256 examples. This is the free lunch of causal language modelling: one forward pass over T tokens yields T supervised gradients, not one. It is also why the mask in part 4 has to be exactly triangular — if position 3 could see position 5, its label would be leaking into its input.</li>
+    <li><b>"Why <span class="mono">.view(B*T, C)</span> and not a transpose?"</b> — both work. <span class="mono">F.cross_entropy</span> accepts <span class="mono">(B, C, T)</span> directly, so <span class="mono">logits.transpose(1, 2)</span> is a valid one-liner. Karpathy flattens instead because the flat form is the honest description of the problem: 256 independent 65-way classifications. Also note <span class="mono">targets.view(B*T)</span> could be <span class="mono">targets.view(-1)</span> — he writes the explicit form, and says so, to keep the shapes readable.</li>
+    <li><b>"Does <span class="mono">generate()</span> break when the context exceeds <span class="mono">block_size</span>?"</b> — not here, and that is a trap. <span class="mono">block_size = 8</span>, yet the script generates 500 tokens and feeds all of them back in. The bigram model has no positional table and no attention mask, so a context of length 500 is harmless — it just wastes compute. From 60:18 onward, once a <span class="mono">position_embedding_table</span> of exactly <span class="mono">block_size</span> rows exists, the same call would index out of range. That is what <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L185" target="_blank" rel="noopener"><span class="mono">idx_cond = idx[:, -block_size:]</span></a> is for. If you write your own version and skip that line, you get a crash roughly 250 tokens into your first sample.</li>
+    <li><b>"4.87 versus 4.17 — is something wrong?"</b> — no. Uniform-over-65 gives 4.174; a randomly initialised embedding gives peaked distributions that are confidently wrong, which scores worse. The number to be alarmed by is one that is much <em>lower</em> than 4.17 at step zero, since that usually means labels have leaked into the input.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py" target="_blank" rel="noopener">bigram.py</a> — Andrej Karpathy (2023) · the 122-line script this part produces, in full. Diff it against <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py" target="_blank" rel="noopener">gpt.py</a> to see exactly how little outside the model class changes.</li>
+    <li><a href="https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing" target="_blank" rel="noopener">The lecture's Colab notebook</a> — Andrej Karpathy (2023) · the notebook being screen-shared. The right place to run the exercises below; it already has tiny Shakespeare loaded.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.cross_entropy.html" target="_blank" rel="noopener">torch.nn.functional.cross_entropy</a> — PyTorch docs · the shape contract that forces the <span class="mono">.view()</span>. Read the Shape section; it also documents <span class="mono">ignore_index</span>, which Karpathy's EX2 asks you to use.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.multinomial.html" target="_blank" rel="noopener">torch.multinomial</a> — PyTorch docs · row-wise categorical sampling. Confirms it takes unnormalised weights and samples per row, which is why one call handles all B batch elements.</li>
+    <li><a href="https://www.youtube.com/watch?v=PaCmpygFfXo" target="_blank" rel="noopener">The spelled-out intro to language modeling: building makemore</a> — Andrej Karpathy (2022) · the bigram model at four times the depth, including the count-and-normalise closed form and why it gives the same answer as gradient descent. This is the video he defers to at 22:11.</li>
+    <li><a href="https://arxiv.org/abs/1711.05101" target="_blank" rel="noopener">Decoupled Weight Decay Regularization</a> — Loshchilov &amp; Hutter (2017) · the paper that AdamW is. Field map extra — Karpathy just says "much more advanced and popular"; this is why the W is there and why it is the default for Transformers.</li>
+    <li><a href="https://arxiv.org/abs/1904.09751" target="_blank" rel="noopener">The Curious Case of Neural Text Degeneration</a> — Holtzman et al. (2019) · field map extra. Why plain multinomial sampling is not what production decoders do, and where top-k and nucleus sampling come from. <a href="https://github.com/karpathy/nanoGPT/blob/master/model.py#L306" target="_blank" rel="noopener">nanoGPT's <span class="mono">generate</span></a> has temperature and top-k for exactly this reason; the lecture's version has neither.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <p>None of Karpathy's EX1–EX4 land in this part — they all need the finished Transformer. These are local to the bigram baseline, and all three run in the <a href="https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing" target="_blank" rel="noopener">Colab</a> in a couple of minutes each.</p>
+  <ol class="exercises">
+    <li><b>Beat gradient descent by counting</b><span class="code">code</span> — build the closed-form optimum and check the optimiser found it. (1) Allocate <span class="mono">N = torch.zeros(65, 65)</span> and, in one pass over <span class="mono">train_data</span>, increment <span class="mono">N[data[i], data[i+1]]</span>. (2) Add 1 to every cell for smoothing, then normalise rows to sum to 1. (3) Take <span class="mono">torch.log</span> and copy the result into <span class="mono">model.token_embedding_table.weight.data</span>. (4) Call <span class="mono">estimate_loss()</span>. A good answer reports a validation loss within about 0.02 of the trained model's ~2.5, and explains why: cross-entropy on a table of independent rows is minimised by the empirical conditional distribution, so 3,000 AdamW steps are an expensive way to compute a histogram. State what the smoothing constant changes and why zero-count bigrams need it.</li>
+    <li><b>Break generate(), then fix it the way gpt.py does</b><span class="code">code</span> — (1) Inside the sampling loop, print <span class="mono">idx.shape</span> every 50 tokens and confirm it grows to <span class="mono">(1, 501)</span> while <span class="mono">block_size</span> is 8. (2) Add <span class="mono">pos = nn.Embedding(block_size, vocab_size)</span> to the model and add <span class="mono">pos(torch.arange(T, device=device))</span> to the logits in <span class="mono">forward</span>. (3) Re-run generation and record the exact token count at which it raises. (4) Add <span class="mono">idx_cond = idx[:, -block_size:]</span> and confirm it survives 500 tokens. A good answer names the error (an index out of range in the positional embedding, at <span class="mono">T = 9</span>) and states the invariant the crop enforces: the model can only ever be handed a context it has position vectors for.</li>
+    <li><b>Calibrate the loss</b> — no code strictly required, but a two-line experiment settles it. Predict, before running, the initial loss for (a) an embedding table initialised to all zeros, (b) the default unit-normal init, (c) an init scaled to std 0.02 as <span class="mono">gpt.py</span> uses. Then measure all three. A good answer gets 4.174 exactly for the zero case, explains why the normal init overshoots to ~4.87, shows that std 0.02 lands very close to 4.174, and connects that to why the initialisation trick matters far more for a 6-layer network than for a lookup table.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p03.html">P03 The mathematical trick: from for-loops to softmax</a> · Back to the <a class="lnk" href="../index.html#baseline">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023), part 02. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

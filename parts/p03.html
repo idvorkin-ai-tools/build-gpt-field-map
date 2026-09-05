@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P03 The mathematical trick: from for-loops to softmax — Let's build GPT, mapped</title>
+<meta name="description" content="How &quot;average everything before me&quot; becomes one lower-triangular matrix multiply, then a masked softmax — and where token positions enter the model." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#attention">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 03 · SELF-ATTENTION</span><span class="mono">42:13–62:00 · 20 min</span></div>
+  <h1>The mathematical trick: from for-loops to softmax</h1>
+  <div class="authors">Andrej Karpathy · Let's build GPT (2023) · part 03 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/kCc8FmEb1nY?t=2533" target="_blank" rel="noopener">Start this part at 42:13 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L143-L147" target="_blank" rel="noopener">gpt.py · the two embedding tables and the language-modelling head this part introduces ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-2533">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> Twenty minutes with no neural network in them at all. The question is mechanical: a token at position <span class="mono">t</span> needs to summarise everything at positions <span class="mono">0…t</span>, for every <span class="mono">t</span> and every batch row, without a Python loop and without seeing the future. The answer is that a lower-triangular matrix of weights, multiplied against the sequence, <em>is</em> that summary — one matmul does all <span class="mono">B×T</span> summaries at once, and normalising the rows to sum to one turns the sums into averages. Karpathy then rewrites the same normalisation as <span class="mono">softmax</span> of a matrix that is zero below the diagonal and <span class="mono">-inf</span> above it, which looks like a pointless detour until you notice that those zeros are the only thing standing between this and self-attention. If you remember one thing: <b>the weight matrix is data, not structure</b> — every version in this part produces the same numbers, and the last one is written so the numbers can start being learned.</div>
+
+  <p class="lead">The lecture has just finished a bigram model that reaches a validation loss of about 2.5 and generates convincing gibberish, and its ceiling is obvious: each token is predicted from itself alone, so the model cannot use a single character of context. Everything after this point is about widening that window. But Karpathy does not open the Transformer paper here. He opens a scratch cell with a random <span class="mono">4×8×2</span> tensor in it and spends twenty minutes on an operation that would fit in a linear-algebra homework, because the operation is the load-bearing part — once you see that <em>a masked, row-normalised matrix multiply is a batched weighted average over the past</em>, self-attention in <a class="lnk" href="p04.html">P04</a> is just the question of where the weights come from.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2533" target="_blank" rel="noopener">42:13</a> — The toy tensor: <span class="mono">B, T, C = 4, 8, 2</span>, eight tokens per row that currently do not talk to each other.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2624" target="_blank" rel="noopener">43:44</a> — The constraint: information flows from the past to the present only, because the future is what we're predicting.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2686" target="_blank" rel="noopener">44:46</a> — Version 1: the honest double for-loop that builds <span class="mono">xbow</span>, a "bag of words" average, then read by hand at <a href="https://youtu.be/kCc8FmEb1nY?t=2809" target="_blank" rel="noopener">46:49</a>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2831" target="_blank" rel="noopener">47:11</a> — The trick, in miniature: a 3×3 of ones times a 3×2 gives column sums, repeated.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=2905" target="_blank" rel="noopener">48:25</a> — <span class="mono">torch.tril</span> zeroes the upper triangle, so each output row sums a different-length prefix.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3029" target="_blank" rel="noopener">50:29</a> — Dividing each row by its own sum turns the sums into running averages.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3114" target="_blank" rel="noopener">51:54</a> — Version 2: one <span class="mono">(T,T) @ (B,T,C)</span> batched matmul replaces both loops; <span class="mono">allclose</span> confirms it.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3282" target="_blank" rel="noopener">54:42</a> — Version 3: start from zeros, <span class="mono">masked_fill</span> the future with <span class="mono">-inf</span>, take a <span class="mono">softmax</span>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3404" target="_blank" rel="noopener">56:44</a> — Why bother: those zeros are affinities, and affinities are about to become data-dependent.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3506" target="_blank" rel="noopener">58:26</a> — Cleanup: an <span class="mono">n_embd = 32</span> bottleneck plus an <span class="mono">lm_head</span> linear layer, so the embedding is no longer the logits.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3618" target="_blank" rel="noopener">60:18</a> — Positional encoding: a second embedding table indexed by position, added to the token embedding.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3680" target="_blank" rel="noopener">61:20</a> — The broadcast that makes <span class="mono">(T,C)</span> add cleanly to <span class="mono">(B,T,C)</span>, and why it does nothing useful yet.</li>
+  </ul>
+
+  <h2>The problem, stated as tensors</h2>
+
+  <p>The scratch example is deliberately smaller than the real model: <span class="mono">B, T, C = 4, 8, 2</span> — four independent sequences, eight time steps each, two channels of information per step. In the actual script <span class="mono">B</span> is <span class="mono">batch_size</span>, <span class="mono">T</span> is <span class="mono">block_size</span> and <span class="mono">C</span> is the embedding width, but nothing in this part depends on those numbers, which is the point of shrinking them.</p>
+
+  <p>The eight vectors in a row are currently strangers. We want position 4 to be able to see positions 0 through 4 and nothing else — <a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=2624" target="_blank" rel="noopener">not 5, 6 or 7</a>, because those are the answers we are training the model to guess. That asymmetry is the entire causal structure of a decoder-only language model, and here it shows up as a shape of a matrix rather than as a piece of theory.</p>
+
+  <p>The cheapest thing you could possibly do with that constraint is average. Position 4 becomes the mean of the five vectors at positions 0–4. Karpathy is blunt that this throws almost everything away:</p>
+
+  <blockquote class="q off">just doing a sum or like an average is an extremely weak form of interaction — this communication is extremely lossy. We've lost a ton of information about the spatial arrangement of all those tokens.
+  <span class="cite">Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=2655" target="_blank" rel="noopener">44:15</a></span></blockquote>
+
+  <p>He is right, and it does not matter, because the averaging is a placeholder for the aggregation. What we are actually building is the <em>plumbing</em> — the shape of the computation that moves information backwards along a sequence. The weights get interesting in <a class="lnk" href="p04.html">P04</a>; the lost spatial information comes back through the positional embedding at the end of this very part.</p>
+
+  <h2>Version 1: the loop you would write first</h2>
+
+  <pre class="code-block"><code># toy example, from the Colab notebook for the video
+torch.manual_seed(1337)
+B,T,C = 4,8,2 # batch, time, channels
+x = torch.randn(B,T,C)
+
+# version 1: for-loop it
+xbow = torch.zeros((B,T,C))
+for b in range(B):
+    for t in range(T):
+        xprev = x[b,:t+1] # (t,C)
+        xbow[b,t] = torch.mean(xprev, 0)</code></pre>
+
+  <p><span class="mono">xbow</span> is short for <em>bag of words</em> — the term for a representation that keeps what appeared and discards the order. The slice <span class="mono">x[b,:t+1]</span> has shape <span class="mono">(t+1, C)</span>, and <span class="mono">torch.mean(xprev, 0)</span> collapses the time axis, leaving a <span class="mono">(C,)</span> vector that gets written into <span class="mono">xbow[b,t]</span>. The <span class="mono">+1</span> is the whole causal story: it is inclusive of the current token and exclusive of everything after it.</p>
+
+  <p>Print <span class="mono">x[0]</span> and <span class="mono">xbow[0]</span> side by side and the structure is visible without any linear algebra: row 0 of the two is identical (the average of one thing is that thing), row 1 of <span class="mono">xbow</span> is the midpoint of rows 0 and 1 of <span class="mono">x</span>, and row 7 is the mean of all eight. That hand-check at <a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=2809" target="_blank" rel="noopener">46:49</a> is worth doing yourself, because it is the ground truth that the next two versions have to reproduce exactly.</p>
+
+  <p>It is also unusable. Two Python loops, <span class="mono">B×T</span> iterations, a fresh slice and a fresh reduction each time — for the real model that would be 64 × 256 = 16,384 sequential mean operations per forward pass, per layer, all of them tiny and all of them serialised through the interpreter.</p>
+
+  <h2>Matrix multiply as weighted aggregation</h2>
+
+  <p>The reframing takes three cells and no PyTorch beyond <span class="mono">tril</span>. Start with a 3×3 of ones times a 3×2 of small integers: every row of the output is the column-wise sum of the right operand, three times over, because every row of the left operand says "take all of you, equally".</p>
+
+  <pre class="code-block"><code>torch.manual_seed(42)
+a = torch.tril(torch.ones(3, 3))
+a = a / torch.sum(a, 1, keepdim=True)
+b = torch.randint(0,10,(3,2)).float()
+c = a @ b</code></pre>
+
+  <p>Two edits turn that into exactly what version 1 computes.</p>
+
+  <p><b>First, <a class="lnk" href="https://pytorch.org/docs/stable/generated/torch.tril.html" target="_blank" rel="noopener"><span class="mono">torch.tril</span></a></b> keeps the lower triangle and zeroes everything above the diagonal, so <span class="mono">a</span> becomes <span class="mono">[[1,0,0],[1,1,0],[1,1,1]]</span>. A zero in a row of the left operand means that row of the right operand contributes nothing to that output row. Row 0 now sums a one-element prefix, row 1 a two-element prefix, row 2 all three. With <span class="mono">b = [[2,7],[6,4],[6,5]]</span> the product is <span class="mono">[[2,7],[8,11],[14,16]]</span> — running sums down the columns.</p>
+
+  <p><b>Second, row-normalise.</b> <span class="mono">a / torch.sum(a, 1, keepdim=True)</span> divides each row by its own number of ones, giving <span class="mono">[[1,0,0],[.5,.5,0],[⅓,⅓,⅓]]</span>, and the running sums become running averages: <span class="mono">[[2,7],[4,5.5],[4.67,5.33]]</span>. The <span class="mono">keepdim=True</span> is not cosmetic — it keeps the sum at shape <span class="mono">(3,1)</span> instead of <span class="mono">(3,)</span>, which is what lets it broadcast across columns rather than across rows. Drop it and you silently normalise the wrong axis.</p>
+
+  <div class="callout">This is the sentence to carry out of the part: <b>a matrix multiply is a weighted aggregation, and the left operand is the table of weights.</b> Whatever you can express as "each output is some weighted combination of the inputs" is a matmul waiting to happen; the lower-triangular shape is just the particular weighting that says <em>only look backwards</em>. Every later version — one head, six heads, six layers — changes what fills that table and never changes the operation.</div>
+
+  <h2>Version 2: one batched matmul</h2>
+
+  <pre class="code-block"><code># version 2: using matrix multiply for a weighted aggregation
+wei = torch.tril(torch.ones(T, T))
+wei = wei / wei.sum(1, keepdim=True)
+xbow2 = wei @ x # (T, T) @ (B, T, C) ----&gt; (B, T, C)
+torch.allclose(xbow, xbow2)</code></pre>
+
+  <p>Here <span class="mono">wei</span> — weights, spelled that way throughout the repo and heard as "way" in the captions — is <span class="mono">(T,T) = (8,8)</span>, and <span class="mono">x</span> is <span class="mono">(B,T,C) = (4,8,2)</span>. The shapes do not match, and PyTorch does not complain: for <span class="mono">@</span>, any dimensions before the last two are batch dimensions, so a missing one is <a class="lnk" href="https://pytorch.org/docs/stable/notes/broadcasting.html" target="_blank" rel="noopener">broadcast</a> into place. <span class="mono">wei</span> is treated as <span class="mono">(1,8,8)</span>, stretched to <span class="mono">(4,8,8)</span>, and the same 8×8 matrix is applied independently to each of the four sequences. One kernel launch replaces 32 Python iterations, and at real scale it replaces 16,384 of them.</p>
+
+  <table class="kv">
+    <tr><th>tensor</th><th>shape in the toy</th><th>shape in gpt.py</th><th>what it holds</th></tr>
+    <tr><td class="mono">x</td><td class="mono">(4, 8, 2)</td><td class="mono">(64, 256, 384)</td><td>the sequence, <span class="mono">C</span> numbers per token</td></tr>
+    <tr><td class="mono">wei</td><td class="mono">(8, 8)</td><td class="mono">(64, 256, 256)</td><td>how much of row <span class="mono">j</span> flows into row <span class="mono">i</span></td></tr>
+    <tr><td class="mono">tril</td><td class="mono">(8, 8)</td><td class="mono">(256, 256)</td><td>the causal mask, a constant buffer</td></tr>
+    <tr><td class="mono">wei @ x</td><td class="mono">(4, 8, 2)</td><td class="mono">(64, 256, 384)</td><td>same shape in, same shape out — always</td></tr>
+  </table>
+
+  <p>Note the last row. The aggregation never changes the shape of the sequence; it only changes what is written at each position. That invariance is why you can stack six of these blocks in <a class="lnk" href="p06.html">P06</a> without any bookkeeping.</p>
+
+  <h2>Version 3: softmax over a masked matrix</h2>
+
+  <pre class="code-block"><code># version 3: use Softmax
+tril = torch.tril(torch.ones(T, T))
+wei = torch.zeros((T,T))
+wei = wei.masked_fill(tril == 0, float('-inf'))
+wei = F.softmax(wei, dim=-1)
+xbow3 = wei @ x
+torch.allclose(xbow, xbow3)</code></pre>
+
+  <p>Read it as three moves. <span class="mono">wei</span> starts as all zeros — an <em>affinity</em> of zero between every pair of positions. <a class="lnk" href="https://pytorch.org/docs/stable/generated/torch.Tensor.masked_fill.html" target="_blank" rel="noopener"><span class="mono">masked_fill</span></a> writes <span class="mono">-inf</span> wherever <span class="mono">tril</span> is zero, i.e. everywhere above the diagonal, which is every (query position, future position) pair. Then <span class="mono">softmax</span> along <span class="mono">dim=-1</span> exponentiates and normalises <em>within each row</em>: <span class="mono">exp(0) = 1</span> in the allowed cells, <span class="mono">exp(-inf) = 0</span> in the masked ones, and dividing by the row sum gives row <span class="mono">t</span> a uniform <span class="mono">1/(t+1)</span> over its prefix and hard zero elsewhere. Bit-for-bit the same matrix as version 2's hand-normalisation, arrived at by a route that happens to accept arbitrary numbers where the zeros are.</p>
+
+  <p>That is the only reason for the detour, and Karpathy previews it at <a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=3404" target="_blank" rel="noopener">56:44</a>: those zeros are placeholders for how interesting each past token is to the current one. Once they are computed from the data instead of hard-coded, softmax still produces a valid set of mixing weights — non-negative, summing to one per row — and <span class="mono">-inf</span> still guarantees that the future contributes exactly nothing, because it is the one value that survives exponentiation as a true zero rather than a small number. Writing <span class="mono">-1e9</span> instead would leak, slightly, and forever.</p>
+
+  <blockquote class="q off">the elements here in the lower triangular part are telling you how much of each element fuses into this position.
+  <span class="cite">Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=3497" target="_blank" rel="noopener">58:17</a></span></blockquote>
+
+  <h2>Cleanup: a bottleneck and a head</h2>
+
+  <p>With the trick in hand, the script needs two structural changes before attention can be dropped into it. Both are small and both are load-bearing.</p>
+
+  <p>In the bigram model the embedding table was <span class="mono">(vocab_size, vocab_size)</span> — a token index went straight in and logits came straight out. Karpathy inserts a level of indirection at <a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=3506" target="_blank" rel="noopener">58:26</a>: the table becomes <span class="mono">(vocab_size, n_embd)</span> with <span class="mono">n_embd = 32</span>, and a new <span class="mono">nn.Linear(n_embd, vocab_size)</span> called <span class="mono">lm_head</span> maps embeddings to logits. Nothing is gained yet — it is one extra linear layer on a model with no context, and he says so — but there is now a 32-wide vector per token that is <em>not</em> the output distribution, which is the space every later mechanism operates in. (The 32 was suggested by Copilot on screen and kept; it survives as <span class="mono">n_embd = 384</span> in the final script.)</p>
+
+  <p>Then the piece that pays back the "extremely lossy" complaint from twenty minutes earlier. A second table, <span class="mono">position_embedding_table</span>, of shape <span class="mono">(block_size, n_embd)</span>, is indexed by <span class="mono">torch.arange(T)</span> — the integers <span class="mono">0…T-1</span> — producing a <span class="mono">(T, C)</span> tensor that is added to the <span class="mono">(B, T, C)</span> token embeddings. The addition broadcasts: the position tensor gets a leading dimension of 1 and is stretched across the batch, so every sequence in the batch is offset by the same position vectors. Positions are <em>learned</em> here, one free vector per slot, not the sinusoids of the original paper.</p>
+
+  <p>At this exact moment the positional information does almost nothing. The logits at step <span class="mono">t</span> still depend only on the token at <span class="mono">t</span> and the position <span class="mono">t</span>, so all the model can learn from it is a position-dependent bias on the output distribution — mildly useful for "line 1 tends to start with a capital", useless for language. It is here because attention has no notion of order (<a class="lnk" href="p05.html">P05</a>, note 2), and by the time it can read <span class="mono">x</span>, the order had better already be encoded in it.</p>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <p>The permanent residue in the final script is the two embedding tables and the head, plus the first four lines of the forward pass:</p>
+
+  <pre class="code-block"><code>        # each token directly reads off the logits for the next token from a lookup table
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(n_embd) # final layer norm
+        self.lm_head = nn.Linear(n_embd, vocab_size)</code></pre>
+
+  <pre class="code-block"><code>    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        # idx and targets are both (B,T) tensor of integers
+        tok_emb = self.token_embedding_table(idx) # (B,T,C)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
+        x = tok_emb + pos_emb # (B,T,C)
+        x = self.blocks(x) # (B,T,C)
+        x = self.ln_f(x) # (B,T,C)
+        logits = self.lm_head(x) # (B,T,vocab_size)</code></pre>
+
+  <p>Read those against the video with one substitution: at 62:00 the <span class="mono">self.blocks</span> and <span class="mono">self.ln_f</span> lines do not exist yet — <span class="mono">x</span> goes straight from <span class="mono">tok_emb + pos_emb</span> into <span class="mono">lm_head</span>. Everything else is already in its final form. <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L143-L147" target="_blank" rel="noopener">gpt.py#L143–L147</a> is the constructor; <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L160-L169" target="_blank" rel="noopener">gpt.py#L160–L169</a> is the forward. <span class="mono">B, T = idx.shape</span> is unpacked explicitly because <span class="mono">T</span> is needed for <span class="mono">arange</span> and is <em>not</em> always <span class="mono">block_size</span> — during generation the context starts at length 1 and grows, which is exactly why <span class="mono">generate</span> later has to crop with <span class="mono">idx[:, -block_size:]</span> (<a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L185" target="_blank" rel="noopener">L185</a>): index the position table past <span class="mono">block_size</span> and it throws.</p>
+
+  <p>And the trick itself, three lines of it, survives verbatim inside the attention head:</p>
+
+  <pre class="code-block"><code>        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        ...
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
+        wei = F.softmax(wei, dim=-1) # (B, T, T)</code></pre>
+
+  <p><a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L72" target="_blank" rel="noopener">L72</a>, <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L84-L85" target="_blank" rel="noopener">L84–L85</a>. Three details that only make sense having watched this part: <span class="mono">register_buffer</span> rather than a plain attribute or a <span class="mono">Parameter</span>, because <span class="mono">tril</span> is a constant that must follow the model to the GPU but must never receive a gradient; <span class="mono">self.tril[:T, :T]</span> rather than <span class="mono">self.tril</span>, because the buffer is allocated at full <span class="mono">block_size</span> and cropped to whatever <span class="mono">T</span> the current input has; and <span class="mono">wei</span> arriving as <span class="mono">(B,T,T)</span> instead of the toy's <span class="mono">(T,T)</span>, because in <a class="lnk" href="p04.html">P04</a> each batch row computes its own affinities. The mask broadcasts across the batch; the affinities do not.</p>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>Which direction the mask points.</b> Karpathy says it backwards on tape at 57:00 — "tokens from the past cannot communicate" — and corrects it in the video description: it is the <em>future</em> that cannot communicate. Fix the direction by reading the indices, not the words: <span class="mono">wei[i,j]</span> is how much position <span class="mono">j</span> contributes to position <span class="mono">i</span>, <span class="mono">tril</span> keeps <span class="mono">j &lt;= i</span>, and each row of the matrix is one query position looking back down its own prefix. Row-major, past-only, current token included.</li>
+    <li><b>Why <span class="mono">(T,T) @ (B,T,C)</span> is legal.</b> It looks like a shape error and is not. <span class="mono">torch.matmul</span> treats everything before the final two dimensions as batch and broadcasts it, so the 8×8 is promoted to <span class="mono">(1,8,8)</span> and applied to each of the four sequences. The same rule quietly fires again one section later on <span class="mono">(B,T,C) + (T,C)</span>. If a shape puzzle in this lecture confuses you, it is almost always <a class="lnk" href="https://pytorch.org/docs/stable/notes/broadcasting.html" target="_blank" rel="noopener">broadcasting</a> — and the debugging move is to print the shapes rather than reason about them.</li>
+    <li><b>Nothing here is learned.</b> <span class="mono">wei</span> in version 3 is <span class="mono">torch.zeros</span>, a literal, not a parameter — running these cells trains nothing and changes no loss. The zeros exist to be replaced. It is a fair criticism that the softmax rewrite is unmotivated until <a class="lnk" href="p04.html">P04</a>, and that is exactly the shape of the part: version 3 is a refactor written in advance of the feature it enables.</li>
+    <li><b><span class="mono">torch.allclose</span> comes back <span class="mono">False</span>.</b> On some PyTorch builds version 2 and version 1 disagree in the last bits, because a matmul accumulates in a different order than <span class="mono">torch.mean</span> and float addition is not associative. Check with <span class="mono">(xbow - xbow2).abs().max()</span>; if it is around <span class="mono">1e-8</span> or smaller, the code is right and the tolerance is wrong. Pass <span class="mono">atol=1e-6</span> and move on.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing" target="_blank" rel="noopener">Colab notebook for the lecture</a> — Andrej Karpathy (2023) · the four versions live in scratch cells here and nowhere in the repo; run them and print the intermediate matrices, which is the fastest way to make this part stick.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L76-L90" target="_blank" rel="noopener">ng-video-lecture · <span class="mono">Head.forward</span></a> — Andrej Karpathy (2023) · fifteen lines where the trick ends up, with the shape of every intermediate in a trailing comment. Worth reading now even though half of it belongs to P04.</li>
+    <li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Attention Is All You Need</a> — Vaswani et al. (2017) · §3.2.3 is the paragraph this part implements: illegal connections in the decoder are masked by setting them to −∞ before the softmax. One sentence in the paper, twenty minutes on video.</li>
+    <li><a href="https://pytorch.org/docs/stable/notes/broadcasting.html" target="_blank" rel="noopener">PyTorch broadcasting semantics</a> — PyTorch docs · settles both of this part's shape surprises, and most of the ones in P04 and P06 too.</li>
+    <li><a href="https://github.com/karpathy/nanoGPT/blob/master/model.py" target="_blank" rel="noopener">nanoGPT · <span class="mono">model.py</span></a> — Andrej Karpathy (2023) · how the same mask is done in production: a <span class="mono">bias</span> buffer of the same triangular ones, with a fast path that hands the causality to PyTorch's fused kernel instead.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html" target="_blank" rel="noopener"><span class="mono">F.scaled_dot_product_attention</span></a> — PyTorch docs · <i>field map extra</i> · the modern one-liner. Its <span class="mono">is_causal=True</span> flag is precisely the <span class="mono">tril</span>/<span class="mono">masked_fill</span> pair you just wrote by hand.</li>
+    <li><a href="https://arxiv.org/abs/2205.14135" target="_blank" rel="noopener">FlashAttention</a> — Dao et al. (2022) · <i>field map extra</i> · the sequel to this part's central move. Materialising a <span class="mono">T×T</span> matrix is <span class="mono">O(T²)</span> in memory, which is fine at <span class="mono">T = 8</span> and fatal at <span class="mono">T = 128k</span>; FlashAttention computes the same result while never writing that matrix down.</li>
+    <li><a href="https://arxiv.org/abs/2104.09864" target="_blank" rel="noopener">RoFormer (RoPE)</a> — Su et al. (2021) · <i>field map extra</i> · what replaced the learned position table added at 60:18 in essentially every model since 2022, by rotating queries and keys instead of adding a vector to the input.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Break the mask on purpose</b><span class="code">code</span> — in the Colab, replace <span class="mono">tril</span> with a banded mask that lets each token see only itself and the previous three (hint: <span class="mono">torch.tril(ones) - torch.tril(ones, -4)</span>). Re-run version 3, then write the matching double for-loop and check the two against each other with <span class="mono">allclose</span>. A good answer notes which rows of the new <span class="mono">wei</span> no longer sum to one before the softmax and why the softmax makes that irrelevant, and states what the mask means as a model: a fixed four-token context window, i.e. sliding-window attention.</li>
+    <li><b>Make the affinities non-uniform by hand</b><span class="code">code</span> — keep version 3 but initialise <span class="mono">wei = torch.randn(T,T)</span> instead of zeros before the <span class="mono">masked_fill</span>. Print <span class="mono">wei</span> after the softmax and confirm each row is non-negative, sums to one, and is zero above the diagonal. Then multiply the pre-softmax matrix by 10 and by 0.1 and print again. A good answer describes the two limits — one-hot "hard attention" as the scale grows, uniform averaging as it shrinks — and connects that to why <a class="lnk" href="p05.html">P05</a> spends a whole note on dividing by <span class="mono">sqrt(head_size)</span>.</li>
+    <li><b>Beat the matmul, then explain why you shouldn't</b><span class="code">code</span> — implement the same prefix average a third way with <span class="mono">torch.cumsum(x, dim=1)</span> divided by <span class="mono">torch.arange(1, T+1)</span> (get the broadcast right: it needs shape <span class="mono">(1,T,1)</span>). Verify it matches <span class="mono">xbow</span>, and time all three at <span class="mono">T = 1024</span>. A good answer observes that <span class="mono">cumsum</span> is <span class="mono">O(T)</span> against the matmul's <span class="mono">O(T²)</span> and wins outright — and then explains why the lecture takes the slower road anyway: <span class="mono">cumsum</span> can only ever compute a uniform average, whereas the matmul accepts any weight matrix, and the weights are the entire point.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p04.html">P04 The crux: self-attention</a> · Back to the <a class="lnk" href="../index.html#attention">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023), part 03. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

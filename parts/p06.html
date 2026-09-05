@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P06 Assembling the block: heads, feed-forward, residuals, LayerNorm — Let's build GPT, mapped</title>
+<meta name="description" content="One attention head becomes a Transformer block: multi-head concat, the 4x MLP, residual connections, pre-norm LayerNorm. Val loss 2.5 down to 2.06." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#transformer">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box bb mono">PART 06 · THE TRANSFORMER</span><span class="mono">79:11–97:49 · 19 min</span></div>
+  <h1>Assembling the block: heads, feed-forward, residuals, LayerNorm</h1>
+  <div class="authors">Andrej Karpathy · Let's build GPT (2023) · part 06 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Video</span><a href="https://youtu.be/kCc8FmEb1nY?t=4751" target="_blank" rel="noopener">Start this part at 79:11 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Code</span><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L121-L136" target="_blank" rel="noopener">gpt.py · Block — attention, feed-forward, residuals, two LayerNorms ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-4751">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> Attention alone is one operator, not an architecture. This stretch surrounds it with the four pieces that make it trainable: several narrow heads run in parallel and get concatenated, a per-token MLP gives each position time to process what it gathered, residual connections give the gradient a clean path from the loss back to the embedding table, and LayerNorm keeps each token's 32 features at a sane scale. Validation loss walks from 2.5 to 2.06 in five steps. The thing to remember: a Transformer block is <em>communication, then computation</em>, both written back into a residual stream that nothing ever multiplies.</div>
+
+  <p class="lead">Part 5 ended with a self-attention head that works in a notebook cell. That is not yet a model. The lecture's next move is deliberately unglamorous engineering: take the head, put it in the network, and then keep adding the smallest piece that unblocks the next improvement — until the thing on screen is, line for line, the decoder half of the 2017 paper. Nothing here is a new idea about attention. Everything here is about making a stack of attention layers actually optimize.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4751" target="_blank" rel="noopener">79:11</a> — Inserting a single head: the <span class="mono">Head</span> module, <span class="mono">tril</span> as a buffer, wired between the embeddings and the output layer.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4849" target="_blank" rel="noopener">80:49</a> — Cropping the context in <span class="mono">generate</span>: positional embeddings make <span class="mono">block_size</span> a hard ceiling for the first time.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4880" target="_blank" rel="noopener">81:20</a> — First result: lower the learning rate, run longer, 2.5 → 2.4.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4919" target="_blank" rel="noopener">81:59</a> — Multi-head attention: four heads of 8 dimensions, concatenated back to 32.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4973" target="_blank" rel="noopener">82:53</a> — Why four narrow channels beat one wide one; the group-convolution analogy. 2.28.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5065" target="_blank" rel="noopener">84:25</a> — Feed-forward layers: the paper's position-wise MLP, and why the tokens needed one. 2.24.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5186" target="_blank" rel="noopener">86:26</a> — The block: interleave communication and computation, then repeat it three times — and watch it fail to improve.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5208" target="_blank" rel="noopener">86:48</a> — Residual connections, from the 2015 ResNet paper.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5343" target="_blank" rel="noopener">89:03</a> — The residual pathway picture: fork off, compute, add back; addition as a gradient distributor.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5435" target="_blank" rel="noopener">90:35</a> — Projections into the stream, and the 4× inner dimension of the MLP. 2.08, and the first overfitting.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5571" target="_blank" rel="noopener">92:51</a> — LayerNorm and its relationship to BatchNorm: the same code, normalizing rows instead of columns.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5712" target="_blank" rel="noopener">95:12</a> — Pre-norm: the one place this implementation knowingly departs from the paper, plus the final <span class="mono">ln_f</span>. 2.06.</li>
+  </ul>
+
+  <h2>One head, wired into the network</h2>
+  <p>The head from part 5 becomes an <span class="mono">nn.Module</span> with three bias-free linear layers — key, query, value — each mapping <span class="mono">n_embd → head_size</span>. Bias is off because these are pure projections; there is nothing for a per-feature offset to do that the layer they feed into cannot also do.</p>
+  <p>The one piece of PyTorch trivia worth internalizing is <span class="mono">register_buffer</span>. The lower-triangular mask is a constant, so it is not a <span class="mono">Parameter</span> — the optimizer must not touch it. But it still has to move with <span class="mono">.to(device)</span> and show up in <span class="mono">state_dict</span>. A buffer is exactly that: tensor state owned by the module, excluded from gradients. Registering it as a plain attribute would leave it on the CPU the moment you train on a GPU.</p>
+  <pre class="code-block"><code>class Head(nn.Module):
+    """ one head of self-attention """
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # input of size (batch, time-step, channels)
+        # output of size (batch, time-step, head size)
+        B,T,C = x.shape
+        k = self.key(x)   # (B,T,hs)
+        q = self.query(x) # (B,T,hs)
+        # compute attention scores ("affinities")
+        wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -&gt; (B, T, T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
+        wei = F.softmax(wei, dim=-1) # (B, T, T)
+        wei = self.dropout(wei)
+        # perform the weighted aggregation of the values
+        v = self.value(x) # (B,T,hs)
+        out = wei @ v # (B, T, T) @ (B, T, hs) -&gt; (B, T, hs)
+        return out</code></pre>
+  <p>Walk the shapes once. Input <span class="mono">(B, T, C)</span>. Keys and queries come out <span class="mono">(B, T, hs)</span>; transposing the last two dimensions of <span class="mono">k</span> gives <span class="mono">(B, hs, T)</span>, so the matmul yields one <span class="mono">T×T</span> affinity matrix per batch element: <span class="mono">(B, T, T)</span>. <span class="mono">masked_fill</span> writes <span class="mono">-inf</span> wherever the triangle is zero — that is row <span class="mono">t</span>, column <span class="mono">t'</span> with <span class="mono">t' &gt; t</span>, the future — and softmax over <span class="mono">dim=-1</span> turns each row into a distribution over the past that sums to 1, with the <span class="mono">-inf</span> entries going to exactly 0. Then <span class="mono">wei @ v</span> contracts the <span class="mono">T</span> axis away and returns <span class="mono">(B, T, hs)</span>. The slice <span class="mono">self.tril[:T, :T]</span> is not decoration: at generation time the context is shorter than <span class="mono">block_size</span>, and the mask has to be cropped to match.</p>
+  <p>Two knock-on changes. First, <span class="mono">generate</span> now has to crop its input — <span class="mono">idx_cond = idx[:, -block_size:]</span> — because the position embedding table only has <span class="mono">block_size</span> rows and will index out of range on token 9 with a context window of 8. The bigram model had no such constraint; it never looked backwards at all. Second, the learning rate has to come down. The bigram script trains happily at <span class="mono">1e-2</span>; with attention in the graph that diverges, so Karpathy lowers it and raises <span class="mono">max_iters</span> to compensate (<a href="https://youtu.be/kCc8FmEb1nY?t=4880" target="_blank" rel="noopener">81:20</a>). Validation loss moves 2.5 → 2.4. It is a real improvement and an unimpressive one — a single 32-dimensional communication channel is not much of an architecture.</p>
+
+  <h2>Four narrow heads instead of one wide one</h2>
+  <p><span class="mono">MultiHeadAttention</span> is four lines: build a <span class="mono">ModuleList</span> of <span class="mono">num_heads</span> heads, run them all on the same <span class="mono">x</span>, and concatenate the outputs along the channel dimension. The arithmetic that makes it invisible from the outside is <span class="mono">head_size = n_embd // n_head</span>. At this point in the video <span class="mono">n_embd</span> is 32 and <span class="mono">n_head</span> is 4, so each head produces <span class="mono">(B, T, 8)</span> and the concatenation restores <span class="mono">(B, T, 32)</span>. In the final <span class="mono">gpt.py</span> the same identity reads 384 / 6 = 64.</p>
+  <p>Notice what this does <em>not</em> cost. Four heads of width 8 have exactly as many projection parameters as one head of width 32, and the aggregated value vector is the same size either way. What you buy is four independent <span class="mono">T×T</span> attention matrices instead of one. Each can specialize: one head can be a "find the nearest vowel" circuit, another a "what happened two characters ago" circuit, and they do not have to share a single softmax. Karpathy compares it to a grouped convolution — one big operation split into independent groups over channels (<a href="https://youtu.be/kCc8FmEb1nY?t=5003" target="_blank" rel="noopener">83:23</a>). Take that as an analogy about the grouping, not a claim about convolution.</p>
+  <p>Result: 2.28. He is careful not to oversell it — the samples still read like noise. The number is the evidence, not the text.</p>
+
+  <h2>Communication, then computation</h2>
+  <p>Up to here the model attends and then immediately computes logits. Every token gathers information from its past and then, with no further processing, has to commit to a prediction. That is the gap the feed-forward layer fills:</p>
+  <blockquote class="q">the tokens looked at each other but didn't really have a lot of time to think on what they found from the other tokens<span class="cite"><a href="https://youtu.be/kCc8FmEb1nY?t=5126" target="_blank" rel="noopener">Karpathy, 85:26</a></span></blockquote>
+  <p>The fix is the paper's "position-wise feed-forward network," which is a two-layer MLP applied to each position separately: <span class="mono">Linear(C, 4C) → ReLU → Linear(4C, C)</span>. The word doing the work is <em>position-wise</em>. <span class="mono">nn.Linear</span> only ever touches the last dimension, so a <span class="mono">(B, T, C)</span> tensor is processed as <span class="mono">B×T</span> independent vectors — no information crosses the time axis. That is worth stating plainly and remembering: <strong>in the entire Transformer, attention is the only operator that moves information between positions.</strong> Everything else — the MLP, the norms, the output layer — is a per-token map.</p>
+  <p>The first version he trains has no 4× widening at all, just a linear and a ReLU at width 32, and it gets 2.24 (<a href="https://youtu.be/kCc8FmEb1nY?t=5186" target="_blank" rel="noopener">86:26</a>). The 4× multiplier arrives later, at <a href="https://youtu.be/kCc8FmEb1nY?t=5496" target="_blank" rel="noopener">91:36</a>, read straight off the paper's numbers: <span class="mono">d_model</span> 512, inner dimension 2048. If you are matching the video against the repo, the class is spelled <span class="mono">FeedFoward</span> — the typo is in the real file, and copying it is how you keep <span class="mono">import</span>s working.</p>
+  <p>Now the pattern is visible, and the <span class="mono">Block</span> just names it: multi-head attention (communication) followed by a feed-forward net (computation), packaged so you can stack it. <span class="mono">nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])</span>, three deep at this stage.</p>
+
+  <h2>Depth stops working, and residuals fix it</h2>
+  <p>Stacking three blocks does not help. Karpathy is honest that he is not diagnosing this so much as recognizing the shape of it — the network is now deep enough that deep-network optimization problems are plausibly what he is hitting (<a href="https://youtu.be/kCc8FmEb1nY?t=5281" target="_blank" rel="noopener">88:01</a>). He does not measure gradient norms or show a vanishing-gradient plot; he reaches for the standard fix. If you want the rigorous version, that is the ResNet paper's job, not this lecture's.</p>
+  <p>The fix is the skip connection from <a href="https://arxiv.org/abs/1512.03385" target="_blank" rel="noopener">He et al. 2015</a>, and the mental model he gives for it is the one worth keeping. Picture a single wide bus of activations — the <em>residual stream</em> — running from the embeddings at the top to the logits at the bottom, always shape <span class="mono">(B, T, C)</span>. Every sublayer forks off the bus, computes something, and adds its result back. The bus itself is never multiplied, never normalized, never reshaped. In backward mode, addition hands the incoming gradient to both of its inputs unchanged, so the gradient from the loss reaches the token embedding table without passing through a single weight matrix:</p>
+  <blockquote class="q">you have this gradient superhighway that goes directly from the supervision all the way to the input, unimpeded<span class="cite"><a href="https://youtu.be/kCc8FmEb1nY?t=5374" target="_blank" rel="noopener">Karpathy, 89:34</a></span></blockquote>
+  <p>In code this is two characters of change per sublayer — <span class="mono">x = x + self.sa(...)</span> instead of <span class="mono">x = self.sa(x)</span> — plus one new module each. <span class="mono">MultiHeadAttention</span> gains <span class="mono">self.proj = nn.Linear(head_size * num_heads, n_embd)</span>, and <span class="mono">FeedFoward</span>'s second linear plays the same role. This is the part people misread: at these settings <span class="mono">head_size * num_heads</span> equals <span class="mono">n_embd</span> exactly, so the projection is 32→32 and changes no shape whatsoever. It is there because writing into a shared stream is its own job — the sublayer computes in its own space, and the projection decides how that result gets expressed in the stream's basis, including scaling it down toward nothing if that is what training wants.</p>
+  <p>Karpathy adds that residual branches are typically initialized to contribute almost nothing, so the network starts out close to the identity and the blocks "come online over time." That is true of good practice but is <em>not</em> what <span class="mono">gpt.py</span> does — its <span class="mono">_init_weights</span> gives every <span class="mono">nn.Linear</span> the same <span class="mono">std=0.02</span>, and the file's own comment flags better init as "not covered in the original GPT video." nanoGPT does implement it, scaling every <span class="mono">c_proj</span> weight by <span class="mono">1/sqrt(2 * n_layer)</span> per the GPT-2 paper (<a href="https://github.com/karpathy/nanoGPT/blob/master/model.py#L142-L145" target="_blank" rel="noopener">model.py L142–L145</a>). Worth knowing so you do not go looking for it in the lecture's file.</p>
+  <p>With residuals, projections and the 4× MLP together, validation loss drops to 2.08 — and for the first time training loss pulls ahead of validation loss. That gap is the reason dropout shows up in part 7.</p>
+
+  <h2>LayerNorm, and the pre-norm swap</h2>
+  <p>The second depth trick is the "Norm" in the paper's "Add &amp; Norm." Karpathy derives LayerNorm by editing the BatchNorm he wrote in an earlier video: change the reduction dimension from 0 to 1 and you are done (<a href="https://youtu.be/kCc8FmEb1nY?t=5650" target="_blank" rel="noopener">94:10</a>). BatchNorm normalizes each <em>feature</em> across the batch — the columns of a <span class="mono">(32, 100)</span> matrix. LayerNorm normalizes each <em>example</em> across its features — the rows. Same formula, transposed intent.</p>
+  <p>The consequences all fall out of that one change. Because the statistics never cross examples, there is no running mean or variance to maintain, no momentum, and no difference between training and inference — all the machinery that makes BatchNorm fiddly disappears. What survives is the learnable gain and bias, so the output is unit-Gaussian only at initialization; training is free to move it, and generally does.</p>
+  <p>In the model it is <span class="mono">nn.LayerNorm(n_embd)</span> applied to a <span class="mono">(B, T, C)</span> tensor. The argument tells it to reduce over the last dimension only, which at this stage means the mean and variance are computed over 32 numbers, per token. <span class="mono">B</span> and <span class="mono">T</span> both act as batch dimensions (<a href="https://youtu.be/kCc8FmEb1nY?t=5773" target="_blank" rel="noopener">96:13</a>) — token 3 of sequence 0 is normalized entirely on its own, using nothing from token 4 and nothing from sequence 1. It is a per-token rescaling of the feature vector, nothing more.</p>
+  <p>The placement is the interesting part, and it is the one deliberate departure from the 2017 paper in the whole build. Figure 1 puts the norm <em>after</em> the sublayer and the addition: <span class="mono">x = LayerNorm(x + sublayer(x))</span>. What everyone actually does now, and what <span class="mono">gpt.py</span> does, is normalize the input to the sublayer and leave the stream untouched: <span class="mono">x = x + sublayer(LayerNorm(x))</span>. This is the pre-norm formulation. It preserves the property the residual stream was introduced for — the identity path from loss to embeddings has nothing sitting on it — which is why pre-norm Transformers train without a learning-rate warmup and post-norm ones typically need one (<a href="https://arxiv.org/abs/2002.04745" target="_blank" rel="noopener">Xiong et al. 2020</a> is the analysis; the video predates leaning on it).</p>
+  <p>Pre-norm has one obligation attached: since nothing normalizes the stream itself, the last block's output arrives at the output layer unnormalized. Hence <span class="mono">self.ln_f</span>, a final LayerNorm between the block stack and <span class="mono">lm_head</span>, which Karpathy adds as an afterthought at <a href="https://youtu.be/kCc8FmEb1nY?t=5837" target="_blank" rel="noopener">97:17</a>. It is not optional — every real implementation has it.</p>
+  <p>Adding the norms takes 2.08 to 2.06. He flags that honestly as slight, and expects the payoff to grow with depth and width. Part 7 is where that bet gets tested.</p>
+
+  <h2>The ladder of losses</h2>
+  <table class="kv">
+    <tr><th>Change</th><th>Val loss</th><th>Timestamp</th></tr>
+    <tr><td>Where part 5 left off (embeddings + positions, no attention in the script)</td><td>~2.5</td><td>—</td></tr>
+    <tr><td>One self-attention head, <span class="mono">head_size = n_embd = 32</span></td><td>2.4</td><td><a href="https://youtu.be/kCc8FmEb1nY?t=4880" target="_blank" rel="noopener">81:20</a></td></tr>
+    <tr><td>Multi-head: 4 heads × 8 dims, concatenated</td><td>2.28</td><td><a href="https://youtu.be/kCc8FmEb1nY?t=5033" target="_blank" rel="noopener">83:53</a></td></tr>
+    <tr><td>+ per-token feed-forward (plain 32 → 32 + ReLU)</td><td>2.24</td><td><a href="https://youtu.be/kCc8FmEb1nY?t=5186" target="_blank" rel="noopener">86:26</a></td></tr>
+    <tr><td>3 blocks stacked, no residuals</td><td>no improvement</td><td><a href="https://youtu.be/kCc8FmEb1nY?t=5281" target="_blank" rel="noopener">88:01</a></td></tr>
+    <tr><td>+ residual connections, projections, 4× MLP inner dim</td><td>2.08 (train &lt; val)</td><td><a href="https://youtu.be/kCc8FmEb1nY?t=5526" target="_blank" rel="noopener">92:06</a></td></tr>
+    <tr><td>+ pre-norm LayerNorms and final <span class="mono">ln_f</span></td><td>2.06</td><td><a href="https://youtu.be/kCc8FmEb1nY?t=5806" target="_blank" rel="noopener">96:46</a></td></tr>
+  </table>
+
+  <h2>The numbers, here versus the finished script</h2>
+  <table class="kv">
+    <tr><th>Symbol</th><th>In the video during this part</th><th>Final <span class="mono">gpt.py</span></th></tr>
+    <tr><td><span class="mono">batch_size</span> (B)</td><td>32</td><td>64</td></tr>
+    <tr><td><span class="mono">block_size</span> (T)</td><td>8</td><td>256</td></tr>
+    <tr><td><span class="mono">n_embd</span> (C)</td><td>32</td><td>384</td></tr>
+    <tr><td><span class="mono">n_head</span></td><td>4</td><td>6</td></tr>
+    <tr><td><span class="mono">head_size</span> = <span class="mono">n_embd // n_head</span></td><td>8</td><td>64</td></tr>
+    <tr><td><span class="mono">n_layer</span></td><td>3</td><td>6</td></tr>
+    <tr><td>MLP inner dimension</td><td>4 × 32 = 128</td><td>4 × 384 = 1536</td></tr>
+    <tr><td><span class="mono">learning_rate</span></td><td>lowered from the bigram's <span class="mono">1e-2</span></td><td><span class="mono">3e-4</span></td></tr>
+    <tr><td><span class="mono">dropout</span></td><td>not yet</td><td>0.2 (part 7)</td></tr>
+  </table>
+
+  <div class="callout">Carry this away: a Transformer block is two sublayers with the same signature — <span class="mono">(B,T,C) → (B,T,C)</span> — one that mixes across time and one that does not, each reading a normalized copy of the residual stream and adding its result back. Every architectural variant you will meet later (RoPE, RMSNorm, SwiGLU, GQA, MoE) swaps out the contents of one of those two boxes. The bus, the fork, and the add stay.</div>
+
+  <h2 id="code">The code at the end of this part</h2>
+  <pre class="code-block"><code>class MultiHeadAttention(nn.Module):
+    """ multiple heads of self-attention in parallel """
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(head_size * num_heads, n_embd)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.dropout(self.proj(out))
+        return out
+
+class FeedFoward(nn.Module):
+    """ a simple linear layer followed by a non-linearity """
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class Block(nn.Module):
+    """ Transformer block: communication followed by computation """
+
+    def __init__(self, n_embd, n_head):
+        # n_embd: embedding dimension, n_head: the number of heads we'd like
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedFoward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x</code></pre>
+  <p>Line by line against the repo. <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L92-L104" target="_blank" rel="noopener">L92–L104</a>, <span class="mono">MultiHeadAttention</span>: <span class="mono">nn.ModuleList</span> (not a plain Python list) so the heads' parameters are registered; <span class="mono">torch.cat(..., dim=-1)</span> glues <span class="mono">num_heads</span> tensors of <span class="mono">(B, T, head_size)</span> into <span class="mono">(B, T, num_heads*head_size)</span>; <span class="mono">self.proj</span> is the write into the residual stream. <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L106-L119" target="_blank" rel="noopener">L106–L119</a>, <span class="mono">FeedFoward</span>: widen 4×, ReLU, narrow back — the second <span class="mono">nn.Linear</span> is this sublayer's projection, folded into the <span class="mono">Sequential</span> rather than given its own attribute. <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L121-L136" target="_blank" rel="noopener">L121–L136</a>, <span class="mono">Block</span>: <span class="mono">head_size = n_embd // n_head</span> is the invariant that lets the concatenation land back on <span class="mono">n_embd</span>; two separate <span class="mono">LayerNorm</span>s because each has its own gain and bias; and the two <span class="mono">x = x + ...</span> lines with the norm <em>inside</em> the call are the pre-norm formulation. The <span class="mono">nn.Dropout</span> calls are part 7's addition — delete them and you have exactly the model this part ends on.</p>
+  <p>And the spine that consumes it, <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L160-L169" target="_blank" rel="noopener">L160–L169</a>:</p>
+  <pre class="code-block"><code>    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        # idx and targets are both (B,T) tensor of integers
+        tok_emb = self.token_embedding_table(idx) # (B,T,C)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
+        x = tok_emb + pos_emb # (B,T,C)
+        x = self.blocks(x) # (B,T,C)
+        x = self.ln_f(x) # (B,T,C)
+        logits = self.lm_head(x) # (B,T,vocab_size)</code></pre>
+  <p>Five lines, and the shape never changes until the last one. <span class="mono">pos_emb</span> is <span class="mono">(T, C)</span> and broadcasts across the batch when added to <span class="mono">(B, T, C)</span>. <span class="mono">self.blocks</span> is the <span class="mono">nn.Sequential</span> stack; every block preserves <span class="mono">(B, T, C)</span>, which is why they compose at all. <span class="mono">ln_f</span> is the pre-norm tax being paid. Only <span class="mono">lm_head</span> changes the last dimension, from <span class="mono">n_embd</span> to <span class="mono">vocab_size</span> = 65.</p>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>The scaling constant: <span class="mono">C</span> or <span class="mono">head_size</span>?</b> On screen at <a href="https://youtu.be/kCc8FmEb1nY?t=4805" target="_blank" rel="noopener">80:05</a> the head divides by <span class="mono">C**-0.5</span>, and Karpathy pins a correction in the description saying it should be <span class="mono">head_size</span>. It is easy to miss because at that exact moment the single head has <span class="mono">head_size == n_embd == 32</span> and the two are the same number. They diverge the second multi-head arrives (8 vs 32), and the repo has it right: <span class="mono">wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5</span>. The variance argument from part 5 is about the length of the vectors being dotted, which is <span class="mono">head_size</span>.</li>
+    <li><b>Why does <span class="mono">self.proj</span> exist if it changes no shape?</b> Because it is not a shape fix. <span class="mono">head_size * num_heads == n_embd</span> by construction, so the projection is square. Its job is to let the sublayer choose <em>how</em> to write into the residual stream, and in particular to be able to write almost nothing at initialization. Delete it and the model still runs — it just loses the knob that makes deep stacks behave. The same logic explains why <span class="mono">FeedFoward</span>'s final <span class="mono">4C → C</span> linear is described as a projection rather than just the second half of an MLP.</li>
+    <li><b>The diagram says "Add &amp; Norm," the code says norm-then-add.</b> The paper's Figure 1 is post-norm; <span class="mono">gpt.py</span> is pre-norm, and Karpathy calls the swap out explicitly at <a href="https://youtu.be/kCc8FmEb1nY?t=5712" target="_blank" rel="noopener">95:12</a>. If you are reading the paper alongside the code, expect this one mismatch and no others in the decoder path. It also explains an apparent extra layer: pre-norm requires a final <span class="mono">ln_f</span> that the original diagram has no box for.</li>
+    <li><b>LayerNorm on <span class="mono">(B, T, C)</span> does not normalize over time.</b> A common wrong picture is that LayerNorm smooths the sequence. <span class="mono">nn.LayerNorm(n_embd)</span> reduces over the last dimension only — 32 numbers for one token, at this stage — and treats both <span class="mono">B</span> and <span class="mono">T</span> as batch axes. Neighbouring tokens have no effect on each other's normalization. If it did reduce over <span class="mono">T</span>, it would leak the future into the past and quietly break the causal mask you spent part 4 building.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Attention Is All You Need</a> — Vaswani et al. (2017) · §3.2.2 is multi-head, §3.3 is the position-wise feed-forward with its 512/2048 numbers, §3.1 and Figure 1 are the Add &amp; Norm placement this part deliberately reverses. The whole of P06 is these three subsections in code.</li>
+    <li><a href="https://arxiv.org/abs/1512.03385" target="_blank" rel="noopener">Deep Residual Learning for Image Recognition</a> — He, Zhang, Ren, Sun (2015) · the skip connection, and the empirical case that depth without it makes training <em>worse</em>, not just slower. Read §3.1–3.2 for the argument Karpathy compresses into one minute.</li>
+    <li><a href="https://arxiv.org/abs/1607.06450" target="_blank" rel="noopener">Layer Normalization</a> — Ba, Kiros, Hinton (2016) · §2–3 derive it exactly as the transpose of batch normalization and explain why sequence models are where BatchNorm falls down.</li>
+    <li><a href="https://arxiv.org/abs/2002.04745" target="_blank" rel="noopener">On Layer Normalization in the Transformer Architecture</a> — Xiong et al. (2020) · <b>field map extra.</b> The gradient analysis behind pre-norm: post-norm has exploding gradients at the output layer at initialization and needs warmup; pre-norm does not. This is the paper the video's "it is now more common" is standing on.</li>
+    <li><a href="https://github.com/karpathy/nanoGPT/blob/master/model.py" target="_blank" rel="noopener">nanoGPT <span class="mono">model.py</span></a> — Karpathy · the production version of this exact block: <a href="https://github.com/karpathy/nanoGPT/blob/master/model.py#L94-L106" target="_blank" rel="noopener">L94–L106</a> is the same <span class="mono">Block</span> with GELU instead of ReLU, <a href="https://github.com/karpathy/nanoGPT/blob/master/model.py#L142-L145" target="_blank" rel="noopener">L142–L145</a> is the residual-projection init the lecture only describes, and <a href="https://github.com/karpathy/nanoGPT/blob/master/model.py#L29-L76" target="_blank" rel="noopener">L29–L76</a> folds all heads into one batched matmul — the answer to Karpathy's EX1, walked through in P07.</li>
+    <li><a href="https://youtu.be/P6sfmUTpUmc" target="_blank" rel="noopener">Building makemore Part 3: Activations &amp; Gradients, BatchNorm</a> — Karpathy (2022) · the earlier lecture he edits live to produce LayerNorm. If the dim-0-to-dim-1 change went past you, this is the hour that makes it obvious.</li>
+    <li><a href="https://arxiv.org/abs/1910.07467" target="_blank" rel="noopener">Root Mean Square Layer Normalization</a> and <a href="https://arxiv.org/abs/2002.05202" target="_blank" rel="noopener">GLU Variants Improve Transformer</a> — Zhang &amp; Sennrich (2019); Shazeer (2020) · <b>field map extra.</b> What replaced the two boxes in this part. Modern stacks drop the mean-subtraction and the bias from LayerNorm (RMSNorm) and replace ReLU-MLP with a gated SwiGLU at roughly 8/3× width. Both are drop-in swaps into <span class="mono">Block</span>, which is the point.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Ablate the residual stream</b><span class="code">code</span> — in the Colab, set <span class="mono">n_layer = 4</span> and train two variants for the same number of steps: <span class="mono">Block.forward</span> as written, and one with the additions removed (<span class="mono">x = self.sa(self.ln1(x)); x = self.ffwd(self.ln2(x))</span>). Record train and val loss at every <span class="mono">eval_interval</span> and plot both curves. Then repeat at <span class="mono">n_layer = 1</span>. A good answer shows the gap widening with depth — at one layer the two are nearly indistinguishable, at four the no-residual run is clearly worse — and names the mechanism: with no addition node, the gradient reaching the embedding table has passed through every weight matrix in the stack.</li>
+    <li><b>Post-norm versus pre-norm</b><span class="code">code</span> — change <span class="mono">Block.forward</span> to the paper's ordering, <span class="mono">x = self.ln1(x + self.sa(x))</span> and <span class="mono">x = self.ln2(x + self.ffwd(x))</span>, and drop <span class="mono">ln_f</span> (post-norm does not need it). Train at <span class="mono">n_layer = 6</span> against the unmodified model. Then re-run the post-norm version with a 200-step linear learning-rate warmup. A good answer reports three curves and observes that post-norm's disadvantage is largest in the first few hundred steps and largely closed by warmup — which is the practical reason the field moved, not a claim that pre-norm has a better optimum.</li>
+    <li><b>Where does the 4× go?</b> — sweep the feed-forward multiplier over 1, 2, 4 and 8 at fixed <span class="mono">n_embd = 32</span>, <span class="mono">n_layer = 3</span>. For each, write down the total parameter count (<span class="mono">sum(p.numel() for p in m.parameters())</span>), the fraction of parameters living in the MLPs versus the attention heads, and the final validation loss. A good answer notices that the MLP dominates the parameter count at 4×, that the loss improvement is sublinear in width, and can say what a fair comparison would be instead — matched parameters, e.g. more layers at 2× against fewer at 8×.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p07.html">P07 Scaling up: hyperparameters, dropout, the final gpt.py, nanoGPT</a> · Back to the <a class="lnk" href="../index.html#transformer">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023), part 06. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

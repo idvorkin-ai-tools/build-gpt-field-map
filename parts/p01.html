@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P01 The setup: the problem, the data, tokens, batches — Let's build GPT, mapped</title>
+<meta name="description" content="How 1.1 MB of Shakespeare becomes 65 integers, why a 9-character window is 8 training examples, and where B and T come from." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#baseline">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 01 · BASELINE</span><span class="mono">00:00–22:11 · 22 min</span></div>
+  <h1>The setup: the problem, the data, tokens, batches</h1>
+  <div class="authors">Andrej Karpathy · Let's build GPT (2023) · part 01 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/kCc8FmEb1nY?t=0" target="_blank" rel="noopener">Start this part at 00:00 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L17-L44" target="_blank" rel="noopener">bigram.py L17–L44 · data, tokenizer, split, get_batch ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-0">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> The question this part answers is: what is the smallest honest version of the thing ChatGPT does, and what does its input look like? The answer is next-symbol prediction over a flat file of Shakespeare, with characters as symbols — 1,115,394 of them drawn from a 65-symbol vocabulary. Text becomes a 1-D tensor of integers; training data becomes random fixed-length windows out of that tensor, stacked into a batch. The one thing to remember is the shape contract that every later part inherits: inputs are <span class="mono">(B, T)</span> integers, targets are the same tensor shifted one step left, and a <span class="mono">(4, 8)</span> batch is not 4 training examples but 32.</div>
+
+  <p class="lead">Nothing in this part is a Transformer. That is deliberate, and it is the reason the rest of the lecture goes as fast as it does. Karpathy spends 22 minutes making the problem so concrete that the model becomes the only remaining unknown: by the end there is a tensor of integers, a function that hands you a random batch of windows out of it, and a precise statement of what a correct answer looks like at every position in that batch. Everything from 22:11 onward — the bigram lookup table, the four versions of attention, the full <span class="mono">gpt.py</span> — is a different function plugged into the same socket. The socket is what gets built here.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=0" target="_blank" rel="noopener">00:00</a> — Intro: ChatGPT is a probabilistic sequence completer; same prompt, different completion.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=125" target="_blank" rel="noopener">02:05</a> — The architecture under it: <i>Attention Is All You Need</i> (2017), and what the "T" in GPT stands for.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=216" target="_blank" rel="noopener">03:36</a> — Why tiny Shakespeare, and nanoGPT as the finished artifact this lecture rewrites from an empty file.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=472" target="_blank" rel="noopener">07:52</a> — Reading the data: 1.1 MB, one flat string, no document boundaries.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=568" target="_blank" rel="noopener">09:28</a> — <span class="mono">sorted(list(set(text)))</span> gives 65 symbols; tokenization is then two dicts, <span class="mono">encode</span> and <span class="mono">decode</span>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=651" target="_blank" rel="noopener">10:51</a> — SentencePiece, tiktoken, and the codebook-size / sequence-length trade.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=807" target="_blank" rel="noopener">13:27</a> — The 90/10 train/val split, and what it is meant to detect.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=867" target="_blank" rel="noopener">14:27</a> — <span class="mono">block_size</span>: you never feed the whole corpus, you feed chunks.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=931" target="_blank" rel="noopener">15:31</a> — Nine characters are eight examples; the loop that spells them out.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1022" target="_blank" rel="noopener">17:02</a> — Why train on every context length from 1 to <span class="mono">block_size</span> — it is not only efficiency.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1144" target="_blank" rel="noopener">19:04</a> — The batch dimension: <span class="mono">get_batch</span>, random offsets, <span class="mono">torch.stack</span>, a (4, 8) tensor.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=1266" target="_blank" rel="noopener">21:06</a> — 32 independent examples in one batch, spelled out prefix by prefix.</li>
+  </ul>
+
+  <h2>The problem, stated so it can be coded</h2>
+  <p>The opening five minutes are a framing argument, and it is worth extracting because the rest of the lecture leans on it. ChatGPT completes sequences. Give it a prompt twice and you get two different answers, which tells you it is not looking anything up — it is <b>sampling</b> from a distribution over what comes next. The architecture doing that came out of a 2017 machine-translation paper, and the "GPT" acronym unpacks as <i>generatively pretrained Transformer</i>: the Transformer is the network, "generatively pretrained" is what you did to it.</p>
+  <p>Karpathy then makes the concession that defines the whole lecture: a production system is trained on a good chunk of the internet and then put through further stages, and none of that is reproducible in an afternoon. So he keeps the architecture and shrinks everything else. The corpus becomes one megabyte of Shakespeare. The alphabet becomes literal characters instead of subword tokens. What survives the shrinking is exactly the part he wants you to understand — the network — and the claim, which the rest of the lecture makes good on, is that <b>nothing structural changes</b>. The same code that babbles fake Shakespeare at 10 million parameters is the code that writes marketing copy at 175 billion. Only the numbers move.</p>
+  <p>Two places to keep your hedge-detector on. He dates GPT-2 to "2017 if I recall correctly" — GPT-2 is February 2019 (2017 is the Transformer paper, and GPT-1 is mid-2018); the point he is making, that nanoGPT reproduces the 124 M-parameter GPT-2 and can load OpenAI's released weights, is correct. And he describes the 2017 paper as reading "like a pretty random machine translation paper." That is fair as a reaction, but it is worth knowing <i>why</i>: the paper's pitch was parallelism and training cost for translation, and what this lecture builds is only the decoder half of the architecture it proposes. That asymmetry gets named explicitly much later, in <a class="lnk" href="p05.html">P5</a>'s note 4 and again in <a class="lnk" href="p07.html">P7</a>.</p>
+
+  <h2>The data: one flat string, 65 distinct symbols</h2>
+  <p>The corpus is <a href="https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt" target="_blank" rel="noopener">tiny Shakespeare</a>, a file Karpathy has been using since char-rnn in 2015. Read it and count and you get <b>1,115,394 characters</b> — about 1.1 MB, which at UTF-8 with a pure-ASCII corpus is also 1,115,394 bytes. It is a concatenation of plays with no metadata, no separators, no document boundaries. The only structure in it is typographic:</p>
+  <pre class="code-block"><code>First Citizen:
+Before we proceed any further, hear me speak.
+
+All:
+Speak, speak.</code></pre>
+  <p>Speaker name, colon, newline, line of verse, blank line. Remember that shape — it is the first thing any model learns here, and in <a class="lnk" href="p02.html">P2</a> you will watch a model that cannot see past one character reproduce the colon-and-newline rhythm while producing no English at all.</p>
+  <p>The vocabulary comes from three stacked calls: <span class="mono">set(text)</span> collapses to distinct characters, <span class="mono">list(...)</span> gives them an order, <span class="mono">sorted(...)</span> makes that order deterministic. The sort is the only part that matters and it is easy to skip past. Python's set iteration order is not something you want a trained checkpoint to depend on; sorting means the integer 46 means <span class="mono">h</span> today and <span class="mono">h</span> on any other machine. The result:</p>
+  <pre class="code-block"><code>['\n', ' ', '!', '$', '&amp;', "'", ',', '-', '.', '3', ':', ';', '?',
+ 'A'…'Z', 'a'…'z']        # 65 symbols</code></pre>
+  <p>Thirteen punctuation-and-whitespace symbols, then the two alphabets. Two details are worth a second: the only digit in all of Shakespeare-as-distributed is <span class="mono">3</span>, and there is no uppercase/lowercase merging — <span class="mono">A</span> and <span class="mono">a</span> are unrelated integers as far as the model is concerned, and it has to learn their relationship from data like everything else. <span class="mono">vocab_size = 65</span> is then wired into two places for the rest of the lecture: the number of rows in the embedding table, and the number of columns in the final logits.</p>
+
+  <h2>Tokenization is a dial, not a design</h2>
+  <p>The tokenizer here is two dictionaries and two one-liners: <span class="mono">stoi</span> maps character to integer, <span class="mono">itos</span> maps back, <span class="mono">encode</span> is a list comprehension and <span class="mono">decode</span> is a join. Encoding <span class="mono">"hi there"</span> gives <span class="mono">[46, 47, 1, 58, 46, 43, 56, 43]</span> — eight integers for eight characters, and <span class="mono">decode(encode(s)) == s</span> for any string over the vocabulary.</p>
+  <p>Karpathy then does something more useful than explaining his own tokenizer: he shows you what you are giving up. Google's SentencePiece and OpenAI's <a href="https://github.com/openai/tiktoken" target="_blank" rel="noopener">tiktoken</a> are subword schemes — units bigger than a character, smaller than a word. Run the same <span class="mono">"hi there"</span> through GPT-2's tiktoken encoding and you get <b>three</b> integers instead of eight, drawn from a vocabulary of 50,257 instead of 65.</p>
+  <p>That is the whole trade, and it is a genuine dial with a cost on both ends:</p>
+  <table class="kv">
+    <tr><th>Scheme</th><th>Vocabulary</th><th>"hi there"</th><th>What it costs</th></tr>
+    <tr><td>character (this lecture)</td><td>65</td><td>8 integers</td><td>long sequences; attention is O(T²), so context is expensive</td></tr>
+    <tr><td>subword (GPT-2 BPE)</td><td>50,257</td><td>3 integers</td><td>a 50k-row embedding table and a 50k-wide output layer</td></tr>
+  </table>
+  <p>Small codebook, long sequences; large codebook, short sequences. Practice sits in the middle because both ends are quadratic in something you care about. Character level is the right choice for a lecture not because it is better but because it deletes an entire subsystem — no merge table, no training a tokenizer, no byte-fallback edge cases — while leaving every downstream line of code identical. Karpathy is explicit that this is a simplification, and he later gave the skipped subsystem its own two hours; that video is linked below.</p>
+  <div class="callout off">The consequence to hold onto: a character-level model with <span class="mono">block_size = 8</span> can see about a word and a half of history. Even the final scaled-up <span class="mono">gpt.py</span> at <span class="mono">block_size = 256</span> sees roughly fifty words. When the samples in <a class="lnk" href="p07.html">P7</a> read like Shakespeare-shaped noise rather than coherent scenes, the binding constraint is context, not parameters — and the tokenizer is half of why.</div>
+
+  <h2>Splitting, and what a validation loss here actually measures</h2>
+  <p>The encoded corpus goes into a single 1-D <span class="mono">torch.Tensor</span> of dtype <span class="mono">long</span> — one integer per character, 1,115,394 of them — and then gets cut 90/10:</p>
+  <table class="kv">
+    <tr><th>Tensor</th><th>Length</th><th>Slice</th></tr>
+    <tr><td><span class="mono">data</span></td><td>1,115,394</td><td>the whole corpus</td></tr>
+    <tr><td><span class="mono">train_data</span></td><td>1,003,854</td><td><span class="mono">data[:n]</span>, first 90%</td></tr>
+    <tr><td><span class="mono">val_data</span></td><td>111,540</td><td><span class="mono">data[n:]</span>, last 10%</td></tr>
+  </table>
+  <p>The stated motivation is overfitting detection: we do not want a network that has memorised this exact text, we want one that produces text like it, so hold some back and watch whether the two losses separate. That is right, and in <a class="lnk" href="p07.html">P7</a> the gap between them becomes the main diagnostic for whether the model is too big for the data.</p>
+  <p>What goes unsaid is worth knowing. The split is <b>contiguous</b>, not random. Contiguous is the correct choice — a randomly-held-out character sitting between two training characters is trivially predictable, so a random split would make the validation loss meaningless. But contiguity has a price: the last 10% of the file is a different stretch of plays, with different speakers and different vocabulary density. So the train/val gap you measure is partly memorisation and partly distribution shift between one end of the corpus and the other. At the scale of this lecture that is fine. At the scale where you would care about the difference, you would hold out whole documents.</p>
+
+  <h2>Chunks, and why nine characters are eight examples</h2>
+  <p>You never feed a corpus to a Transformer. You feed fixed-length windows, and the length is <span class="mono">block_size</span> — Karpathy's name for what other codebases call context length. Here it starts at <b>8</b>.</p>
+  <p>The first thing he prints is <span class="mono">train_data[:block_size+1]</span>, nine integers: <span class="mono">[18, 47, 56, 57, 58, 1, 15, 47, 58]</span>, which decodes to <span class="mono">"First Cit"</span>. The <span class="mono">+1</span> is the crux of the data format. Inputs are the first eight, targets are the <i>same window shifted one step left</i> — so the target for position <span class="mono">t</span> is the character that actually followed the prefix ending at <span class="mono">t</span>. A nine-integer window therefore contains eight (context, target) pairs, with contexts of every length from 1 to 8:</p>
+  <pre class="code-block"><code>x = train_data[:block_size]        # 18 47 56 57 58  1 15 47
+y = train_data[1:block_size+1]     # 47 56 57 58  1 15 47 58
+
+for t in range(block_size):
+    context = x[:t+1]
+    target  = y[t]
+    print(f"when input is {context.tolist()} the target: {target}")</code></pre>
+  <p>Reading it out: given <span class="mono">[18]</span> predict <span class="mono">47</span>; given <span class="mono">[18, 47]</span> predict <span class="mono">56</span>; given <span class="mono">[18, 47, 56]</span> predict <span class="mono">57</span>; and so on to the full eight-character prefix. One window, eight supervised examples.</p>
+  <p>Karpathy is careful to say this is not merely a way to squeeze value out of data you already loaded:</p>
+  <blockquote class="q off">We train on all the eight examples here with context between one all the way up to context of <span class="mono">block_size</span>… it's also done to make the Transformer network be used to seeing contexts all the way from as little as one all the way to <span class="mono">block_size</span>.
+  <span class="cite">Andrej Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=1022" target="_blank" rel="noopener">17:02</a> (cleaned auto-captions)</span></blockquote>
+  <p>This is a generation requirement, not a training convenience. In <a class="lnk" href="p02.html">P2</a> sampling starts from a single token and grows the context one character at a time. If the network had only ever seen full-length contexts, its first seven predictions would be out of distribution every time you sampled. Training on all prefix lengths is what makes the model well-defined on a one-character prompt.</p>
+  <p>There is a second reason he leaves implicit, and it is the one that makes Transformer language modelling economically different from most supervised learning: the prediction at every position is computed <i>anyway</i>. Because of the causal mask you will meet in <a class="lnk" href="p03.html">P3</a>, position <span class="mono">t</span>'s output depends only on positions ≤ <span class="mono">t</span>, so a single forward pass over an eight-token window legitimately produces eight independent predictions from eight different amounts of history. You get <span class="mono">T</span> training signals for the price of one pass. Nothing is being reused improperly; the mask is what makes it honest.</p>
+
+  <h2>The batch dimension, and the shape contract</h2>
+  <p>The second dimension exists purely to keep the hardware busy. GPUs are wide; a single 8-integer sequence uses almost none of that width, so we stack several unrelated windows into one tensor and let them ride through the network together. They never interact — a fact that gets a whole numbered note in <a class="lnk" href="p05.html">P5</a> — they just share a kernel launch.</p>
+  <p><span class="mono">get_batch</span> does three things. It picks which split to read from; it draws <span class="mono">batch_size</span> random offsets into that split with <span class="mono">torch.randint</span>; and it <span class="mono">torch.stack</span>s the resulting 1-D windows into rows of a 2-D tensor. With the notebook's <span class="mono">batch_size = 4</span> and <span class="mono">block_size = 8</span>, and <span class="mono">torch.manual_seed(1337)</span> so the numbers are reproducible, you get:</p>
+  <table class="kv">
+    <tr><th>Name</th><th>Shape</th><th>Contents</th></tr>
+    <tr><td><span class="mono">ix</span></td><td>(4,)</td><td>random start offsets into <span class="mono">train_data</span></td></tr>
+    <tr><td><span class="mono">xb</span></td><td>(4, 8) = (B, T)</td><td>four independent 8-character windows, as integers</td></tr>
+    <tr><td><span class="mono">yb</span></td><td>(4, 8) = (B, T)</td><td>the same four windows shifted one step left</td></tr>
+  </table>
+  <p>The first row begins <span class="mono">24, 43, 58, 5</span> — decode it and you get <span class="mono">"Let'"</span>. Karpathy walks it prefix by prefix: input <span class="mono">24</span> → target <span class="mono">43</span>; input <span class="mono">24, 43</span> → target <span class="mono">58</span>; input <span class="mono">24, 43, 58</span> → target <span class="mono">5</span>. Four rows times eight positions is <b>32 supervised examples in one (4, 8) tensor</b>, and that count is the single most useful thing to carry out of this part. The loss you will see in <a class="lnk" href="p02.html">P2</a> is a mean over 32 numbers, not 4.</p>
+  <blockquote class="q off">Those chunks are processed completely independently, they don't talk to each other.
+  <span class="cite">Andrej Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=1113" target="_blank" rel="noopener">18:33</a> (cleaned auto-captions)</span></blockquote>
+  <div class="callout">Carry this forward: <b>B, T, C</b>. Batch, time, channels. The input to every model in this lecture is <span class="mono">(B, T)</span> integers; the output is <span class="mono">(B, T, C)</span> floats where <span class="mono">C = vocab_size</span> at the very end; the targets are <span class="mono">(B, T)</span> integers, shifted. From here to the final <span class="mono">gpt.py</span>, that socket never changes — only the function between the two ends, and the value of <span class="mono">C</span> in the middle layers.</div>
+
+  <h2 id="code">The code at the end of this part</h2>
+  <p>By 22:11 the notebook holds everything below. This is the excerpt of <a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py" target="_blank" rel="noopener">bigram.py</a> that this part produces — the file it eventually gets written into at 38:00, in <a class="lnk" href="p02.html">P2</a>. The corpus, the vocabulary, the tokenizer, the split:</p>
+  <pre class="code-block"><code># wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+with open('input.txt', 'r', encoding='utf-8') as f:
+    text = f.read()
+
+# here are all the unique characters that occur in this text
+chars = sorted(list(set(text)))
+vocab_size = len(chars)
+# create a mapping from characters to integers
+stoi = { ch:i for i,ch in enumerate(chars) }
+itos = { i:ch for i,ch in enumerate(chars) }
+encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
+decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
+
+# Train and test splits
+data = torch.tensor(encode(text), dtype=torch.long)
+n = int(0.9*len(data)) # first 90% will be train, rest val
+train_data = data[:n]
+val_data = data[n:]</code></pre>
+  <p>Line by line (<a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L17-L34" target="_blank" rel="noopener">L17–L34</a>): the <span class="mono">encoding='utf-8'</span> matters only because Python would otherwise guess from the locale. <span class="mono">chars</span> is the 65 symbols in sorted order, and <span class="mono">vocab_size</span> is derived from the data rather than hard-coded — swap the corpus and everything downstream re-sizes itself. <span class="mono">stoi</span> and <span class="mono">itos</span> are exact inverses by construction because both come from the same <span class="mono">enumerate</span>. <span class="mono">torch.long</span> is not optional: these integers are used as indices into an embedding table and as class labels for cross-entropy, and both APIs require 64-bit integers. And <span class="mono">int(0.9*len(data))</span> is a plain truncation — <span class="mono">n = 1,003,854</span>.</p>
+  <p>Then the loader, which is the actual deliverable of this part (<a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L36-L44" target="_blank" rel="noopener">L36–L44</a>):</p>
+  <pre class="code-block"><code>batch_size = 32 # how many independent sequences will we process in parallel?
+block_size = 8  # what is the maximum context length for predictions?
+
+# data loading
+def get_batch(split):
+    # generate a small batch of data of inputs x and targets y
+    data = train_data if split == 'train' else val_data
+    ix = torch.randint(len(data) - block_size, (batch_size,))
+    x = torch.stack([data[i:i+block_size] for i in ix])
+    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    x, y = x.to(device), y.to(device)
+    return x, y</code></pre>
+  <p>Five lines of body, each doing one thing. <span class="mono">data = train_data if …</span> deliberately shadows the module-level <span class="mono">data</span> inside the function, which is tidy but will bite you if you ever want the full corpus in here. <span class="mono">torch.randint(hi, (batch_size,))</span> draws <span class="mono">batch_size</span> integers uniformly from <span class="mono">[0, hi)</span> — sampling <i>with</i> replacement, so a batch can in principle contain the same window twice, and there is no notion of an epoch anywhere in this codebase. The two list comprehensions build the input and target windows, offset by exactly one. <span class="mono">torch.stack</span> creates a new leading dimension, turning <span class="mono">batch_size</span> tensors of shape <span class="mono">(8,)</span> into one of shape <span class="mono">(batch_size, 8)</span> — that new axis is <span class="mono">B</span>. And the <span class="mono">.to(device)</span> happens here, in the loader, so the model never has to think about where its inputs live.</p>
+  <p>Two numbers to note while you are here. The script version uses <span class="mono">batch_size = 32</span> where the notebook demo used 4 — the <span class="mono">(4, 8)</span> tensor you were just staring at is <span class="mono">(32, 8)</span> once the code is a script. And with <span class="mono">max_iters = 3000</span> in <a class="lnk" href="p02.html">P2</a>, training touches <span class="mono">3000 × 32 × 8 = 768,000</span> character positions out of 1,003,854 available — less than a single pass over the training split. At bigram scale that is plenty.</p>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why is the window <span class="mono">block_size + 1</span> long?"</b> Because the targets are the inputs shifted one step. To supply a target for the eighth input position you need a ninth character. In <span class="mono">get_batch</span> this shows up as <span class="mono">y = data[i+1 : i+block_size+1]</span> — same length as <span class="mono">x</span>, starting one later. Both tensors are <span class="mono">(B, T)</span>; only the alignment differs.</li>
+    <li><b>"<span class="mono">len(data) - block_size</span> looks like an off-by-one bug."</b> It isn't, and it has zero slack — walk it. <span class="mono">torch.randint</span>'s bound is exclusive, so the largest offset drawn is <span class="mono">len(data) - block_size - 1</span>. The last element <span class="mono">y</span> touches is at index <span class="mono">i + block_size = len(data) - 1</span>, the final valid index. One character further and the slice would silently come back short — Python slicing does not raise on over-run — and you would get a confusing <span class="mono">torch.stack</span> size-mismatch rather than an index error.</li>
+    <li><b>"Is a (4, 8) batch four examples or eight?"</b> Neither: it is 32. Every one of the <span class="mono">B × T</span> positions is a separate (context, target) pair with its own loss term, and the reported loss is their mean. This is why the batch and block dimensions both show up in the cost of a step, and why <a class="lnk" href="p02.html">P2</a> has to flatten <span class="mono">(B, T, C)</span> logits to <span class="mono">(B*T, C)</span> before handing them to <span class="mono">F.cross_entropy</span>.</li>
+    <li><b>"Everyone else says tokens; this says characters. Am I learning the wrong thing?"</b> The model code is byte-for-byte identical either way. A tokenizer is a bijection between strings and integer sequences; the network only ever sees integers in <span class="mono">[0, vocab_size)</span>. Swapping in GPT-2's BPE changes exactly one number — <span class="mono">vocab_size</span> from 65 to 50,257 — plus the physical size of two matrices. Nothing about attention, residuals or LayerNorm knows or cares.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Attention Is All You Need</a> — Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin (2017) · The architecture the whole lecture reconstructs. Read §3.1–§3.2 now for the shapes and come back to §3.5 (positional encoding) before <a class="lnk" href="p03.html">P3</a>.</li>
+    <li><a href="https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt" target="_blank" rel="noopener">tiny Shakespeare — input.txt</a> — Andrej Karpathy (2015, from char-rnn) · The actual corpus: 1,115,394 characters. Download it and run the numbers in this part yourself; every count here came from that file.</li>
+    <li><a href="https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing" target="_blank" rel="noopener">Google Colab notebook for the lecture</a> — Andrej Karpathy (2023) · The live notebook this part builds up, including the eight-examples printout and the seeded <span class="mono">(4, 8)</span> batch. The exercises below are meant to be done in a copy of it.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/bigram.py#L36-L44" target="_blank" rel="noopener">ng-video-lecture — bigram.py, get_batch</a> — Andrej Karpathy (2023) · The nine lines this part exists to produce, in their final form. Note that <span class="mono">gpt.py</span> ships the identical function with only the hyperparameters changed.</li>
+    <li><a href="https://arxiv.org/abs/1508.07909" target="_blank" rel="noopener">Neural Machine Translation of Rare Words with Subword Units</a> — Sennrich, Haddow, Birch (2016) · Field map extra. The BPE algorithm behind the "50,257 tokens" that Karpathy gestures at — merge the most frequent adjacent pair, repeat. Short and readable.</li>
+    <li><a href="https://www.youtube.com/watch?v=zduSFxRajkE" target="_blank" rel="noopener">Let's build the GPT Tokenizer</a> — Andrej Karpathy (2024) · Field map extra. Two hours on precisely the subsystem this part skips, from the same series. Watch after you finish this lecture, not before; it is the answer to "but what if I want real tokens?"</li>
+    <li><a href="https://github.com/karpathy/nanoGPT/blob/master/data/openwebtext/prepare.py" target="_blank" rel="noopener">nanoGPT — data/openwebtext/prepare.py</a> — Andrej Karpathy (2023) · Field map extra. What this part looks like at real scale: tokenize once, write <span class="mono">train.bin</span>/<span class="mono">val.bin</span> as raw uint16, then <span class="mono">np.memmap</span> them so random windows come off disk. Same shifted-by-one contract, no <span class="mono">torch.tensor(encode(text))</span> of the whole corpus in RAM.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Swap the tokenizer for raw bytes</b><span class="code">code</span> — In a copy of the Colab, replace <span class="mono">encode</span>/<span class="mono">decode</span> with UTF-8 byte encoding (<span class="mono">list(s.encode('utf-8'))</span> and <span class="mono">bytes(l).decode('utf-8')</span>) and set <span class="mono">vocab_size = 256</span>. Then: (1) report the new <span class="mono">len(data)</span> against 1,115,394 and explain why it barely moves for this corpus; (2) confirm <span class="mono">decode(encode(text)) == text</span>; (3) say what changed in the shape of the embedding table and what did not change anywhere else. A good answer names the one property tiny Shakespeare has — pure ASCII — that makes byte-level and character-level nearly the same here, and states what would break on a corpus with emoji.</li>
+    <li><b>Break the loader on purpose, then prove it safe</b><span class="code">code</span> — Set <span class="mono">block_size = len(train_data)</span> and call <span class="mono">get_batch('train')</span>. Predict the error before you run it, then run it. Next, change <span class="mono">y</span> to look two steps ahead (<span class="mono">data[i+2 : i+block_size+2]</span>) with a normal <span class="mono">block_size</span>, run it a few hundred times, and explain why the failure is intermittent and why it surfaces as a <span class="mono">torch.stack</span> error rather than an index error. Finish by writing the one-line assertion you would put at the top of <span class="mono">get_batch</span> to turn both failures into a clear message.</li>
+    <li><b>Measure what your validation split is actually measuring</b><span class="code">code</span> — Compute the per-character frequency distribution of <span class="mono">train_data</span> and <span class="mono">val_data</span> and compare them (total variation distance is enough). Check how many of the 65 symbols appear in each. Then build a second, deliberately wrong split by sampling random <em>positions</em> instead of taking a contiguous tail, and argue in three sentences why a validation loss on that split would look far better while meaning far less. A good answer separates the two things the real gap contains: memorisation, and the fact that the last tenth of the file is different plays.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p02.html">P02 The bigram baseline: model, loss, generation, training</a> · Back to the <a class="lnk" href="../index.html#baseline">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023), part 01. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

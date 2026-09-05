@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P08 Back to ChatGPT: pretraining, fine-tuning, RLHF, and what to do next — Let's build GPT, mapped</title>
+<meta name="description" content="The last seven minutes: how a 10M-parameter Shakespeare babbler relates to GPT-3, why pretraining alone gives a document completer, and the alignment stage." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#notes">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box bb mono">PART 08 · BACK TO CHATGPT</span><span class="mono">108:53–116:20 · 7 min</span></div>
+  <h1>Back to ChatGPT: pretraining, fine-tuning, RLHF, and what to do next</h1>
+  <div class="authors">Andrej Karpathy · Let's build GPT (2023) · part 08 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Video</span><a href="https://youtu.be/kCc8FmEb1nY?t=6533" target="_blank" rel="noopener">Start this part at 108:53 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Code</span><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L5-L16" target="_blank" rel="noopener">gpt.py · the eleven constants that decide the scale ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-6533">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> The model you just built and GPT-3 are the same code with different constants: 10.8 million parameters against 175 billion, 300 thousand tokens against 300 billion. Nothing in <span class="mono">gpt.py</span> would have to change architecturally to be the big one — what changes is infrastructure and data. But scale alone gives you a <em>document completer</em>, not an assistant: ask it a question and it may answer with more questions, because completing a document is literally all it was trained to do. Turning that into ChatGPT is a second stage — supervised fine-tuning on demonstration data, then a reward model trained on human rankings, then reinforcement learning against that reward model. Karpathy sketches this in four minutes and says the data is internal to OpenAI and hard to replicate; that last claim is the one part of the lecture that has genuinely expired.</div>
+
+  <p class="lead">This is the bookend. The lecture opened on ChatGPT writing a haiku and asked what is under the hood; 108 minutes later there is a working answer, and Karpathy walks back up the ladder to show how far the thing on your screen is from the thing in the browser tab. The value of these seven minutes is calibration: which of the gap is <em>architecture</em> (almost none), which is <em>scale</em> (a factor of roughly 10,000 to 1,000,000 depending on what you count), and which is <em>a training objective you have not written yet</em> (all of alignment). Get that split right and you know exactly which parts of the field are downstream of what you just implemented.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6533" target="_blank" rel="noopener">108:53</a> — Two stages: everything so far was pretraining; ChatGPT needs a fine-tuning stage on top.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6552" target="_blank" rel="noopener">109:12</a> — Our pretraining in miniature: <span class="mono">print(sum(p.numel() ...))</span> says ~10 million parameters.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6582" target="_blank" rel="noopener">109:42</a> — Character tokens vs. BPE: 1 M characters is only ~300 K tokens in OpenAI's 50 K vocabulary.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6614" target="_blank" rel="noopener">110:14</a> — The GPT-3 table: 175 B parameters, and the columns are the variables at the top of <span class="mono">gpt.py</span>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6646" target="_blank" rel="noopener">110:46</a> — 300 billion training tokens, a millionfold increase, and "not even large by today's standards".</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6677" target="_blank" rel="noopener">111:17</a> — Why pretraining alone leaves you with a document completer, not an answerer.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6740" target="_blank" rel="noopener">112:20</a> — Alignment step 1: supervised fine-tuning on maybe thousands of question/answer demonstrations.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6800" target="_blank" rel="noopener">113:20</a> — Steps 2 and 3: raters rank responses, a reward model learns the ranking, PPO optimizes against it.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6833" target="_blank" rel="noopener">113:53</a> — The hedge: this data is internal, this stage is much harder to replicate, nanoGPT covers pretraining only.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6872" target="_blank" rel="noopener">114:32</a> — Conclusions: a decoder-only Transformer, ~200 lines of code, the repo with its git log.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6924" target="_blank" rel="noopener">115:24</a> — What was not covered: every flavour of fine-tuning, from plain SFT to reward-model rounds.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6955" target="_blank" rel="noopener">115:55</a> — "Go forth and transform."</li>
+  </ul>
+
+  <h2>Stage one is what you already have</h2>
+
+  <p>The framing to hold onto: training a system like ChatGPT is <b>pretraining</b> followed by <b>fine-tuning</b>, and the entire lecture — 116 minutes, every version of attention, every residual connection — was an implementation of stage one on a toy corpus. Not an analogy for stage one. The actual objective, the actual architecture, the actual loss. Predict the next token, average cross-entropy over every position in the batch, backprop, AdamW. If you swapped tiny Shakespeare for a scrape of the web and turned the constants up, you would be running a pretraining job.</p>
+
+  <p>That is a stronger claim than it sounds, and it is worth checking rather than taking on faith. The forward pass in <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L160-L179" target="_blank" rel="noopener"><span class="mono">GPTLanguageModel.forward</span></a> is: embed tokens, add position embeddings, run <span class="mono">n_layer</span> blocks of (LayerNorm → multi-head causal self-attention → residual, LayerNorm → MLP → residual), a final LayerNorm, a linear projection to vocabulary logits, cross-entropy against the inputs shifted by one. That list is also an accurate description of GPT-3's forward pass, and of most decoder-only models shipped since. The differences that exist at frontier scale are real but small in kind: a different tokenizer, learned positions replaced by rotary embeddings, ReLU replaced by GELU or SwiGLU, LayerNorm replaced by RMSNorm, attention kernels fused for memory bandwidth. None of them changes what the model computes in any way you would call architectural.</p>
+
+  <h2>The same code with bigger constants</h2>
+
+  <p>Karpathy makes the point by putting his printed parameter count next to Table 2.1 of the <a href="https://arxiv.org/abs/2005.14165" target="_blank" rel="noopener">GPT-3 paper</a> — the table listing every model size they trained. Its columns are, in order, parameters, layers, model dimension, heads, head size, batch size, learning rate. Those are precisely <span class="mono">n_layer</span>, <span class="mono">n_embd</span>, <span class="mono">n_head</span>, <span class="mono">head_size</span>, <span class="mono">batch_size</span> and <span class="mono">learning_rate</span> from the top of <span class="mono">gpt.py</span>. The paper is describing your script's hyperparameter block with different numbers in it.</p>
+
+  <table class="kv">
+    <tr><th>Knob</th><th>this lecture's GPT</th><th>GPT-3 175B</th><th>ratio</th></tr>
+    <tr><td>parameters</td><td>10,788,929 (prints as 10.788929 M)</td><td>175 B</td><td>~16,000×</td></tr>
+    <tr><td><span class="mono">n_layer</span></td><td>6</td><td>96</td><td>16×</td></tr>
+    <tr><td><span class="mono">n_embd</span> / d_model</td><td>384</td><td>12,288</td><td>32×</td></tr>
+    <tr><td><span class="mono">n_head</span></td><td>6</td><td>96</td><td>16×</td></tr>
+    <tr><td>head size</td><td>64 (384 ÷ 6)</td><td>128</td><td>2×</td></tr>
+    <tr><td><span class="mono">block_size</span> (context)</td><td>256 characters</td><td>2,048 BPE tokens</td><td>8× in tokens, far more in text</td></tr>
+    <tr><td><span class="mono">batch_size</span></td><td>64 sequences = 16,384 tokens</td><td>3.2 M tokens</td><td>~200×</td></tr>
+    <tr><td><span class="mono">learning_rate</span></td><td>3e-4</td><td>0.6e-4</td><td>smaller model, larger LR</td></tr>
+    <tr><td>vocabulary</td><td>65 characters</td><td>50,257 BPE merges</td><td>—</td></tr>
+    <tr><td>training data</td><td>~1 M characters ≈ 300 K BPE tokens</td><td>300 B tokens</td><td>~1,000,000×</td></tr>
+    <tr><td>hardware / time</td><td>one A100, ~15 min (<a href="https://youtu.be/kCc8FmEb1nY?t=6021" target="_blank" rel="noopener">100:21</a>)</td><td>thousands of GPUs, weeks</td><td>—</td></tr>
+  </table>
+
+  <p>Two of those rows deserve a second look. First, the token count. Tiny Shakespeare is about a million characters, and because this model is character-level, a million characters is a million training tokens. But OpenAI's models are not character-level — they use subword chunks, roughly 50 K of them, so the same file is only around 300 K tokens in their vocabulary. That is the honest apples-to-apples number, and it is what makes the ratio to GPT-3's 300 B tokens come out at almost exactly a millionfold. Karpathy then adds the line that has aged best in the whole part: 300 B <a href="https://youtu.be/kCc8FmEb1nY?t=6646" target="_blank" rel="noopener">would not be considered large today</a>, you would be going to a trillion and above. Written in January 2023, and by 2024 open models were routinely pretrained on ten to fifteen trillion tokens.</p>
+
+  <p>Second, the batch size. The captions garble the number here — the on-screen comparison is our <span class="mono">batch_size = 64</span> against GPT-3's 3.2 M, and 64 is easy to mishear as 65, which is also a number in this script (the vocabulary size). They are unrelated. Note too that the two batch sizes are not measured in the same unit: ours is 64 <em>sequences</em>, which at <span class="mono">block_size = 256</span> is 16,384 tokens per step; GPT-3's is quoted directly in tokens. Comparing 64 to 3,200,000 overstates the gap by a factor of 256.</p>
+
+  <div class="callout">The thing to carry away from the comparison: <b>scale is a data and infrastructure problem, not a modelling one</b>. The reason you cannot train GPT-3 tonight is not that you are missing a layer type. It is that 300 B tokens have to be collected and cleaned, and that thousands of GPUs have to exchange gradients without falling over for weeks. Every hard part of that lives in a training harness, not in a model definition — which is exactly why nanoGPT's <span class="mono">model.py</span> looks like what you wrote while its <span class="mono">train.py</span> looks nothing like your training loop (<a href="p07.html">P7</a>).</div>
+
+  <h2>What pretraining actually gives you</h2>
+
+  <p>Here is the part that surprises people who have only ever used a chat interface. Run pretraining to completion and you do not get something that answers questions. You get a model that continues documents, because continuing documents is the only thing the loss ever rewarded. Yours babbles Shakespeare; one trained on the web babbles the web — plausible news articles, plausible forum posts, plausible boilerplate.</p>
+
+  <p>Give such a model a question and its behaviour is undefined in a specific, mechanical sense. It samples the continuation that is most likely given the training distribution, and on the internet a question is very often followed by <em>more questions</em> — an FAQ, a quiz, a list of related searches. So it may answer your question with five more questions, or ignore it and write the rest of the article the question seemed to be embedded in. That is not a bug or a failure of intelligence. It is the model doing its job perfectly against an objective that has no concept of "helpful".</p>
+
+  <p>The mental correction to make: <b>helpfulness is not an emergent property of next-token prediction, it is a separate thing you train for.</b> Pretraining buys capability — grammar, facts, code, reasoning patterns, the shape of arguments. It buys no interface to that capability. Prompt engineering in the GPT-3 era was largely the craft of tricking a document completer into a document format whose completion happened to be the answer you wanted ("Q: … A:"). Fine-tuning replaces the trick with training.</p>
+
+  <h2>The three-step alignment recipe</h2>
+
+  <p>Karpathy walks through the diagram from OpenAI's <a href="https://openai.com/blog/chatgpt/" target="_blank" rel="noopener">ChatGPT announcement</a> — the same three steps written up properly in the <a href="https://arxiv.org/abs/2203.02155" target="_blank" rel="noopener">InstructGPT paper</a>. Each step optimizes something different, and knowing which is which is most of the literacy this section is worth:</p>
+
+  <ul>
+    <li><b>Step 1 — supervised fine-tuning (SFT).</b> Collect documents in a fixed shape: a prompt on top, an ideal response below, written by humans. Then keep training with exactly the same next-token loss you already implemented, only on this data. Nothing changes in the code — same <span class="mono">F.cross_entropy</span>, same optimizer, fewer steps and a lower learning rate. The dataset is small, maybe thousands of examples rather than internet-scale, and Karpathy flags the reason it works anyway: models this large are extremely <em>sample-efficient</em> during fine-tuning. They are not learning to write. They are learning which of the many document formats already in their head is now the relevant one.</li>
+    <li><b>Step 2 — the reward model.</b> Sample several responses to the same prompt, have human raters rank them best to worst, and train a second network to predict those rankings — a scalar score for how desirable any candidate response is. The interesting design choice is that raters <em>compare</em> rather than score. People are far more consistent at "A is better than B" than at "this is a 7/10", and a ranking loss turns the comparisons into a usable numeric reward.</li>
+    <li><b>Step 3 — reinforcement learning against that reward.</b> With a reward model in hand you no longer need a human in the loop, so you can optimize the language model's sampling policy to produce responses the reward model scores highly. The algorithm named in the video is PPO — <a href="https://arxiv.org/abs/1707.06347" target="_blank" rel="noopener">Proximal Policy Optimization</a>, a policy-gradient method (the auto-captions render it as "po", which is not a thing). Steps 2 and 3 together are what people mean by <b>RLHF</b>, reinforcement learning from human feedback.</li>
+  </ul>
+
+  <p>Notice the shape of the whole pipeline: it converts a model that <em>can</em> produce good answers into one that <em>reliably does</em>, using two very different data types — demonstrations for step 1, preferences for steps 2 and 3. And notice what it does not do: it adds no parameters, changes no architecture, and touches nothing you built in parts 1 through 7. The Transformer is the substrate; alignment is a training regime applied to it.</p>
+
+  <p>Karpathy hedges honestly at <a href="https://youtu.be/kCc8FmEb1nY?t=6833" target="_blank" rel="noopener">113:53</a>: there are more steps in between, a lot of the data is internal to OpenAI, and this stage is much harder to replicate than pretraining — nanoGPT deliberately covers only the pretraining half. In January 2023 that was simply true. It is the one claim in the lecture that has since been overtaken by events.</p>
+
+  <h2>What changed after January 2023</h2>
+
+  <p>Everything above still describes the shape of post-training. The specific algorithm in step 3, and the "you cannot replicate this" caveat, are what moved.</p>
+
+  <p><b>The reward model and the RL loop got optional.</b> <a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noopener">Direct Preference Optimization</a> (Rafailov et al., May 2023) showed that the RLHF objective has a closed-form reparameterization: you can fold the reward model into the policy and train directly on preference pairs with an ordinary supervised-looking loss, comparing the model's log-probabilities against a frozen copy of itself. No reward network, no sampling loop, no PPO. It is a few dozen lines on top of an SFT script, which is why nearly every open-weights chat model between 2023 and 2025 used DPO or one of its variants. The three-box diagram in the video collapses to two.</p>
+
+  <p><b>Then RL came back, cheaper and with better rewards.</b> <a href="https://arxiv.org/abs/2402.03300" target="_blank" rel="noopener">GRPO</a> (introduced in DeepSeekMath, Feb 2024) is PPO with the value network deleted: sample a group of completions for one prompt, and use the group's own mean and spread of rewards as the baseline for the advantage. That removes a second full-sized model from GPU memory and made policy-gradient post-training practical for labs without OpenAI's budget. Meanwhile <a href="https://arxiv.org/abs/2411.15124" target="_blank" rel="noopener">Tulu 3</a> (Nov 2024) named and popularized <b>RLVR</b> — reinforcement learning with <em>verifiable</em> rewards. Where step 2 learns a reward model to imitate human taste, RLVR skips it entirely on tasks where correctness is checkable by a program: does the final answer match, do the unit tests pass. The reward is a boolean from a checker rather than a float from a network, so there is nothing to over-optimize against.</p>
+
+  <p><b>And that turned out to produce reasoning.</b> <a href="https://arxiv.org/abs/2501.12948" target="_blank" rel="noopener">DeepSeek-R1</a> (Jan 2025) ran large-scale RL with verifiable rewards on math and code, and reported that long chain-of-thought behaviour — self-checking, backtracking, spending more tokens on harder problems — emerged from the RL rather than being demonstrated in SFT data. Its R1-Zero variant reached this from a base model with no supervised fine-tuning at all. This is the lineage of the "reasoning models" that appeared across the industry through 2025, and it is a direct descendant of the third box in Karpathy's diagram.</p>
+
+  <p><b>The replication caveat expired.</b> Open preference datasets, open post-training recipes (Tulu 3 published data, code and evaluations), and libraries like <a href="https://github.com/huggingface/trl" target="_blank" rel="noopener">TRL</a> that implement SFT, DPO and GRPO as drop-in trainers mean the second stage is now something a motivated individual can run on rented GPUs. Karpathy himself closed the loop with <a href="https://github.com/karpathy/nanochat" target="_blank" rel="noopener">nanochat</a> (2025), which is nanoGPT plus tokenizer, midtraining, SFT, optional RL and a chat UI — the full pipeline of this section, in the same readable style, for about a hundred dollars of compute. If you want the updated version of these seven minutes in the author's own voice, his 2025 talk <a href="https://www.youtube.com/watch?v=7xTGNNLPyMI" target="_blank" rel="noopener">Deep Dive into LLMs like ChatGPT</a> spends three hours on what this part covers in four minutes.</p>
+
+  <blockquote class="q">Go forth and transform.<span class="cite">— Karpathy, signing off, <a href="https://youtu.be/kCc8FmEb1nY?t=6955" target="_blank" rel="noopener">115:55</a></span></blockquote>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <p>No new code is written in this part — the script is finished. What the part does is reinterpret two blocks you already have as the dials that set scale, so those are the ones worth re-reading with GPT-3's table next to them.</p>
+
+  <pre class="code-block"><code># hyperparameters
+batch_size = 64 # how many independent sequences will we process in parallel?
+block_size = 256 # what is the maximum context length for predictions?
+max_iters = 5000
+eval_interval = 500
+learning_rate = 3e-4
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+eval_iters = 200
+n_embd = 384
+n_head = 6
+n_layer = 6
+dropout = 0.2
+# ------------
+
+# ... 180 lines later ...
+
+model = GPTLanguageModel()
+m = model.to(device)
+# print the number of parameters in the model
+print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')</code></pre>
+
+  <ul>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L6-L7" target="_blank" rel="noopener"><span class="mono">batch_size</span> and <span class="mono">block_size</span></a> — the two shape constants. Every activation in the network is <span class="mono">(B, T, C) = (64, 256, 384)</span>; the attention matrix inside each head is <span class="mono">(64, 256, 256)</span> per head, and there are 36 of them (6 heads × 6 layers). This is the memory wall: attention is quadratic in <span class="mono">T</span>, so quadrupling the context multiplies that tensor by sixteen.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L13-L15" target="_blank" rel="noopener"><span class="mono">n_embd</span>, <span class="mono">n_head</span>, <span class="mono">n_layer</span></a> — the three that set parameter count. Roughly, parameters scale as <span class="mono">n_layer × n_embd²</span> (each block holds 4·n_embd² in attention projections plus 8·n_embd² in the 4×-wide MLP, so ≈ 12·n_embd² per layer). Check it: 12 × 384² × 6 ≈ 10.6 M, which is nearly all of the 10,788,929 the print statement reports; the embeddings and the final head make up the rest. The same formula applied to GPT-3's 96 layers of width 12,288 gives ≈ 174 B — the paper's 175 B.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L201" target="_blank" rel="noopener"><span class="mono">print(sum(p.numel() ...))</span></a> — the line that produces the number Karpathy reads out. <span class="mono">p.numel()</span> is the element count of each parameter tensor; summing over <span class="mono">m.parameters()</span> walks every registered submodule. Worth running before every training job you ever start: it is the cheapest possible sanity check that the model you built is the size you think it is.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L206-L220" target="_blank" rel="noopener">the training loop</a> — 15 lines, unchanged since <a href="p02.html">P2</a>'s bigram model. This is the pretraining loop. A real one adds checkpointing, learning-rate decay, gradient accumulation, mixed precision and multi-GPU synchronization, and none of those change what is being optimized.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"So if I train this on more data, do I get ChatGPT?"</b> No — you get a better document completer. More data and more parameters improve the pretraining objective, and the pretraining objective has no term for being helpful. The assistant behaviour comes from stage two, on data that looks nothing like web text. Scale and alignment are orthogonal axes; a 175 B base model with no fine-tuning is still, in the video's phrasing, undefined behaviour when you ask it a question.</li>
+    <li><b>"Ours is 10 M and GPT-3 is 175 B, so it's 16,000× bigger — but he says up to a millionfold?"</b> Two different ratios, both correct. Parameters differ by roughly 16,000×; <em>training tokens</em> differ by roughly 1,000,000× (300 K vs 300 B). Karpathy's "10,000 to 1 million times bigger, depending on how you count" at <a href="https://youtu.be/kCc8FmEb1nY?t=6924" target="_blank" rel="noopener">115:24</a> is deliberately spanning both. If you want the single number that predicts capability, it is neither: it is total training compute, ≈ 6 × parameters × tokens, where the gap is the product of the two — around ten billionfold.</li>
+    <li><b>"Is the reward model the same network as the language model?"</b> Separate network, usually initialized from the same SFT checkpoint with the language-modelling head swapped for a scalar head. It reads a (prompt, response) pair and emits one number. It is trained once from the ranking data and then frozen while step 3 optimizes against it — which is exactly why step 3 can drift into <em>reward hacking</em>: the policy finds responses the frozen reward model loves and humans do not. Practical RLHF adds a KL penalty against the SFT model to keep the policy from wandering; DPO's use of a frozen reference model is the same guard rail in a different costume.</li>
+    <li><b>"Character-level was a toy choice — does anything I learned transfer?"</b> Everything except the tokenizer transfers unchanged. Tokenization only changes what an integer in <span class="mono">idx</span> stands for and how big the embedding table and the final linear layer are; <span class="mono">vocab_size</span> is the only line of <span class="mono">gpt.py</span> that would move. It matters for efficiency (BPE packs ~4× more text into the same 256-slot context) and it is the source of a family of well-known model quirks around spelling and arithmetic, but it is not part of the Transformer.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://arxiv.org/abs/2005.14165" target="_blank" rel="noopener">Language Models are Few-Shot Learners</a> — Brown et al. (2020) · the GPT-3 paper. Table 2.1 is the table on screen at 110:14; §2.1 and §2.2 are the scaled-up version of your hyperparameter block and data loader.</li>
+    <li><a href="https://arxiv.org/abs/2203.02155" target="_blank" rel="noopener">Training language models to follow instructions with human feedback</a> — Ouyang et al. (2022) · InstructGPT: the three-step SFT → reward model → PPO recipe Karpathy sketches, written down properly, including the finding that a 1.3 B aligned model was preferred to the 175 B base model.</li>
+    <li><a href="https://arxiv.org/abs/1707.06347" target="_blank" rel="noopener">Proximal Policy Optimization Algorithms</a> — Schulman et al. (2017) · the "PPO" in step 3, from well before anyone applied it to language. Read it for what the clipped objective is actually protecting against: too large a policy update from one batch.</li>
+    <li><a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noopener">Direct Preference Optimization: Your Language Model is Secretly a Reward Model</a> — Rafailov et al. (2023) · <em>field map extra.</em> The derivation that removes the reward model and the RL loop from the picture. The single biggest change to this part of the lecture.</li>
+    <li><a href="https://arxiv.org/abs/2402.03300" target="_blank" rel="noopener">DeepSeekMath (GRPO)</a> — Shao et al. (2024) · <em>field map extra.</em> §4 introduces GRPO: PPO with the critic replaced by group-relative normalization. The default RL algorithm for open post-training since.</li>
+    <li><a href="https://arxiv.org/abs/2411.15124" target="_blank" rel="noopener">Tulu 3: Pushing Frontiers in Open Language Model Post-Training</a> — Lambert et al. (2024) · <em>field map extra.</em> Names RLVR and publishes the whole stage-two pipeline — data, code, evaluations — which is the direct refutation of "this stage is hard to replicate".</li>
+    <li><a href="https://arxiv.org/abs/2501.12948" target="_blank" rel="noopener">DeepSeek-R1</a> — DeepSeek-AI et al. (2025) · <em>field map extra.</em> Large-scale RL with verifiable rewards produces long chain-of-thought reasoning; R1-Zero does it from a base model with no SFT at all.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <p>These are Karpathy's own EX2, EX3 and EX4 from the <a href="https://www.youtube.com/watch?v=kCc8FmEb1nY" target="_blank" rel="noopener">video description</a>, expanded into steps. (EX1, the batched-heads challenge, belongs to <a href="p07.html">P7</a>.) All three run on top of the finished <span class="mono">gpt.py</span>; the first two want a GPU, the third does not.</p>
+  <ol class="exercises">
+    <li><b>EX2 — train it on your own data, then teach it to add</b><span class="code">code</span> — Karpathy's exercise, in two escalating versions.
+      <br>(a) The easy half: replace <span class="mono">input.txt</span> with any corpus you like — your own writing, a codebase, song lyrics — and rerun. Nothing else changes; <span class="mono">vocab_size</span> recomputes itself from <span class="mono">sorted(list(set(text)))</span>. Watch the train/val gap: a small corpus will overfit long before 5,000 iterations, and you will see val loss turn back upward while train loss keeps falling.
+      <br>(b) The advanced half, which is the interesting one: train a GPT to compute <span class="mono">a+b=c</span>. Steps: (1) replace <span class="mono">get_batch</span> with a generator that emits random problems as character strings — no <span class="mono">train.bin</span>, no held-out file, just fresh samples each step, so there is no train/val gap to speak of. (2) Write the digits of <span class="mono">c</span> in <em>reverse</em> order, because the carry propagates right-to-left and a causal model can only condition on what it has already emitted; left-to-right output would require the model to know the high digit before computing the low ones. (3) Mask the loss over the prompt positions — the <span class="mono">a+b=</span> part is given, not predicted — by setting those targets to <span class="mono">-1</span> and passing <span class="mono">ignore_index=-1</span> to <span class="mono">F.cross_entropy</span>. (4) Train and evaluate on held-out digit lengths. A good answer reports exact-match accuracy on unseen operands, and notes where it fails: usually longer numbers than were ever trained on. The "swole doge" extension is a full calculator for <span class="mono">+ − × ÷</span>, which likely needs chain-of-thought traces in the training data — the model must be allowed to write intermediate steps, because a single forward pass has a fixed depth and long multiplication does not.</li>
+    <li><b>EX3 — pretrain on something big, then fine-tune on Shakespeare</b><span class="code">code</span> — Karpathy's exercise, and a hands-on version of this part's whole argument. Steps: (1) find a corpus large enough that train and val loss stay glued together for the whole run — a sample of <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb" target="_blank" rel="noopener">FineWeb</a>, all of Project Gutenberg, a large code dump. No visible gap means you are not memorizing and every step is buying real generalization. (2) Pretrain <span class="mono">gpt.py</span> on it, keeping the character vocabulary — but build the vocabulary from the <em>union</em> of both corpora so the fine-tuning stage does not meet unknown characters. (3) Save the weights with <span class="mono">torch.save(model.state_dict(), ...)</span>. (4) Fine-tune: load that checkpoint, swap in tiny Shakespeare, drop the learning rate by roughly 10× (3e-5 rather than 3e-4) and run far fewer iterations. (5) Compare final validation loss against the from-scratch run's 1.48. A good answer reports both curves on the same axes and says how many fine-tuning steps the pretrained model needed to pass the from-scratch model's <em>best</em> loss — that number, not the final loss, is the measure of what pretraining bought.</li>
+    <li><b>EX4 — implement one thing from the papers</b><span class="code">code</span> — Karpathy's exercise: read some Transformer papers, add one feature people actually use, and measure whether it helps. Steps: (1) pick one change and only one — candidates the earlier parts flag are rotary position embeddings (<a href="p03.html">P3</a>), FlashAttention or PyTorch's <span class="mono">scaled_dot_product_attention</span> (<a href="p04.html">P4</a>), grouped-query attention, RMSNorm or SwiGLU (<a href="p06.html">P6</a>), and weight tying between the embedding table and <span class="mono">lm_head</span> (<a href="p07.html">P7</a>). (2) Before touching anything, fix a baseline: same seed, same <span class="mono">max_iters</span>, record val loss at every <span class="mono">eval_interval</span>, and note wall-clock time and peak <span class="mono">torch.cuda.max_memory_allocated()</span>. (3) Make the change. (4) Rerun identically and plot both curves. A good answer is honest about which axis moved: several of these (FlashAttention, GQA) are not meant to improve loss at all — they buy speed or memory at equal loss, and reporting "no improvement" for them is the correct result. State the comparison you are making before you run it, or you will find a way to call any outcome a win.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="../index.html#exercises">Karpathy's four exercises, collected on the map</a> · Back to the <a class="lnk" href="../index.html#notes">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023), part 08. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

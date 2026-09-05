@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P04 The crux: self-attention — Let's build GPT, mapped</title>
+<meta name="description" content="Queries, keys and values turn a fixed uniform average into a learned, data-dependent one — the ten minutes the whole field rests on." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#attention">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box wb mono">PART 04 · BUILDING SELF-ATTENTION</span><span class="mono">62:00–71:38 · 10 min</span></div>
+  <h1>The crux: self-attention</h1>
+  <div class="authors">Andrej Karpathy · Let's build GPT (2023) · part 04 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Video</span><a href="https://youtu.be/kCc8FmEb1nY?t=3720" target="_blank" rel="noopener">Start this part at 62:00 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--off)"><span class="lbl">Code</span><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L64-L90" target="_blank" rel="noopener">gpt.py · class Head, one head of self-attention ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-3720">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> Part 3 built a machine that averages every earlier token equally. That average is a fixed, hand-chosen weighting, and it is the wrong one: a token should pull hard on the few earlier tokens that matter to it and ignore the rest. Self-attention makes those weights <em>learned and data-dependent</em> by having each position emit two small vectors — a <span class="mono">query</span> ("what am I looking for") and a <span class="mono">key</span> ("what do I contain") — and defining the weight from position <span class="mono">t</span> to position <span class="mono">s</span> as the dot product of query <span class="mono">t</span> with key <span class="mono">s</span>. The same triangular mask and the same softmax from part 3 are reused unchanged; only the numbers going into them stopped being zeros. One more vector, the <span class="mono">value</span>, decides what actually gets shipped when a token is attended to. That is the entire mechanism: <span class="mono">softmax(mask(q @ kᵀ)) @ v</span>.</div>
+
+  <p class="lead">The lecture has spent twenty minutes building an elaborate way to compute a running average — for-loops, then a lower-triangular matrix, then a softmax over a matrix of zeros — and Karpathy has been careful to say each time that the numbers in that matrix are placeholders. This part is where the placeholders get filled in. Everything structural was already in place at the end of part 3; what arrives here is the one idea that turns the scaffolding into a transformer, and it is small enough to fit in fifteen lines. Karpathy flags it as the single most important stretch of the video, and he is right: parts 5 through 7 are notes, plumbing and scale on top of what happens in these ten minutes.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3720" target="_blank" rel="noopener">62:00</a> — Setting the stage: the toy tensor is now <span class="mono">B,T,C = 4,8,32</span>, and the current code does a plain average of the past.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3802" target="_blank" rel="noopener">63:22</a> — Why uniform is wrong: different tokens should find different earlier tokens interesting, and that has to depend on the data.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3832" target="_blank" rel="noopener">63:52</a> — The mechanism stated: every node emits a query and a key; the affinity is their dot product.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3895" target="_blank" rel="noopener">64:55</a> — <span class="mono">head_size = 16</span>; three <span class="mono">nn.Linear(C, head_size, bias=False)</span> projections, and why the bias is dropped.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3926" target="_blank" rel="noopener">65:26</a> — Producing <span class="mono">k</span> and <span class="mono">q</span>: <span class="mono">(B,T,16)</span> each, computed for all positions in parallel, with no communication yet.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3957" target="_blank" rel="noopener">65:57</a> — The batched matmul: <span class="mono">q @ k.transpose(-2,-1)</span>, and why it is <span class="mono">-2,-1</span> and not <span class="mono">0,1</span>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=3987" target="_blank" rel="noopener">66:27</a> — Shapes: <span class="mono">(B,T,16) @ (B,16,T) → (B,T,T)</span>, one square affinity matrix per batch element.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4049" target="_blank" rel="noopener">67:29</a> — Inspecting the result: the weights are no longer shared across the batch, and no longer uniform within a row.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4080" target="_blank" rel="noopener">68:00</a> — The worked intuition: the eighth token's query hunting for a matching key in a particular channel.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4141" target="_blank" rel="noopener">69:01</a> — Peeling the mask and softmax off to show the raw dot products, then putting them back.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4204" target="_blank" rel="noopener">70:04</a> — The third projection: aggregate <span class="mono">v</span>, not <span class="mono">x</span>. Output is <span class="mono">(B,T,head_size)</span>.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=4266" target="_blank" rel="noopener">71:06</a> — Private versus public: <span class="mono">x</span> is what a token is, <span class="mono">v</span> is what it says.</li>
+  </ul>
+
+  <h2>Where part 3 leaves us, and why that is not enough</h2>
+
+  <p>At the start of this stretch the toy tensor has been widened from two channels to thirty-two, so we are looking at <span class="mono">B,T,C = 4,8,32</span>: four independent sequences, eight positions each, a thirty-two-dimensional vector per position. The aggregation code from part 3 builds an 8×8 matrix of zeros, masks its upper triangle to <span class="mono">-inf</span>, softmaxes each row, and matrix-multiplies the result against <span class="mono">x</span>. Because every unmasked entry in a row was the same number, softmax hands back the uniform distribution over the allowed positions, and the matmul computes, for position <span class="mono">t</span>, the mean of positions <span class="mono">0…t</span>.</p>
+
+  <p>That is a legitimate way to move information backwards in time, and it is also a terrible prior. Averaging says every earlier token is equally relevant to me, always, regardless of what any of us are. A character in the middle of a word cares enormously about the two characters before it and essentially not at all about a character forty positions back — and which forty-positions-back token it cares about changes with the content. Karpathy's example is deliberately linguistic and deliberately vague:</p>
+
+  <blockquote class="q off">If I'm a vowel then maybe I'm looking for consonants in my past, and maybe I want to know what those consonants are, and I want that information to flow to me.<span class="cite">Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=3802" target="_blank" rel="noopener">63:22</a></span></blockquote>
+
+  <p>Note the shape of the wish. It is not "let me learn a fixed 8×8 weight matrix" — that would be a learned but still <em>positional</em> prior, the same for every sentence, and it would break the moment the context got longer. It is "let the weight from me to you be computed from what you and I currently are." The weights have to be a function of the activations, not parameters in their own right. That constraint is what forces the whole query/key construction; everything else follows from it.</p>
+
+  <h2>Query, key, value: three questions each token answers</h2>
+
+  <p>The trick is to give every position a small vocabulary for advertising itself and for asking about others, and then to define compatibility as a dot product in that space. Concretely, three learned linear maps run over the channel dimension, applied identically and independently at every position:</p>
+
+  <ul>
+    <li><span class="mono">query = nn.Linear(n_embd, head_size, bias=False)</span> — "what am I looking for?"</li>
+    <li><span class="mono">key = nn.Linear(n_embd, head_size, bias=False)</span> — "what do I contain?"</li>
+    <li><span class="mono">value = nn.Linear(n_embd, head_size, bias=False)</span> — "if you decide I'm relevant, here is what you get."</li>
+  </ul>
+
+  <p>Three points about this that are easy to skate past. First, they are <em>bias-free</em>, which for a single head is close to a convention: a constant added to every key shifts every score in a column by the same amount, and softmax over the row can partially absorb that, so the bias buys little and later gets subsumed by LayerNorm anyway. Second, they are applied at every position in parallel with no interaction — after the projections, position 5 still knows nothing about position 3. All the communication in a transformer happens in exactly one place, the matmul that comes next. Third, <span class="mono">head_size</span> is a genuinely new hyperparameter, unrelated to <span class="mono">n_embd</span>: in the notebook it is 16 while <span class="mono">C</span> is 32. That asymmetry is the seed of multi-head attention in part 6 — six heads of size 64 concatenating back up to 384 channels.</p>
+
+  <p>The asymmetry between query and key is worth dwelling on, because it is the part people quietly assume away. <span class="mono">q</span> and <span class="mono">k</span> are produced by <em>different</em> weight matrices, so the affinity from <span class="mono">i</span> to <span class="mono">j</span> is <span class="mono">q_i · k_j</span>, and the affinity from <span class="mono">j</span> to <span class="mono">i</span> is <span class="mono">q_j · k_i</span>. There is no reason for these to be equal. Attention is a directed relation, not a similarity — "I find you interesting" and "you find me interesting" are separate claims, and the model can and does learn them separately. If the two projections were tied, the score matrix would be symmetric and the head would lose half its expressive range.</p>
+
+  <h2>The matmul that does the talking</h2>
+
+  <p>With <span class="mono">k</span> and <span class="mono">q</span> both <span class="mono">(B, T, head_size)</span>, the affinity matrix is every query dotted against every key. In tensor form that is <span class="mono">q @ k.transpose(-2, -1)</span>. Two details in that line trip people up. The transpose is by negative index, <span class="mono">-2</span> and <span class="mono">-1</span>, because dimension 0 is the batch and must be left alone — <span class="mono">k.transpose(0, 1)</span> or a bare <span class="mono">k.T</span> would scramble batch with time. And <span class="mono">@</span> on three-dimensional tensors is a <em>batched</em> matmul: PyTorch treats the leading dimension as a stack of independent matrix multiplies, so what actually happens is four separate 8×16 by 16×8 products, one per sequence, never mixing them.</p>
+
+  <table class="kv">
+    <tr><th>Step</th><th>Expression</th><th>Shape</th><th>What it is</th></tr>
+    <tr><td>input</td><td><span class="mono">x</span></td><td><span class="mono">(4, 8, 32)</span></td><td><span class="mono">(B, T, C)</span> — token embedding plus position embedding, from part 3</td></tr>
+    <tr><td>keys</td><td><span class="mono">k = key(x)</span></td><td><span class="mono">(4, 8, 16)</span></td><td>one <span class="mono">head_size</span> advertisement per position</td></tr>
+    <tr><td>queries</td><td><span class="mono">q = query(x)</span></td><td><span class="mono">(4, 8, 16)</span></td><td>one request per position</td></tr>
+    <tr><td>scores</td><td><span class="mono">q @ k.transpose(-2,-1)</span></td><td><span class="mono">(4, 8, 8)</span></td><td><span class="mono">(B,T,T)</span> — row <span class="mono">t</span>, column <span class="mono">s</span> is how much <span class="mono">t</span> wants <span class="mono">s</span></td></tr>
+    <tr><td>mask</td><td><span class="mono">wei.masked_fill(tril == 0, -inf)</span></td><td><span class="mono">(4, 8, 8)</span></td><td>strictly-upper triangle set to <span class="mono">-inf</span>: the future is deleted</td></tr>
+    <tr><td>weights</td><td><span class="mono">F.softmax(wei, dim=-1)</span></td><td><span class="mono">(4, 8, 8)</span></td><td>each row a distribution; row <span class="mono">t</span> has <span class="mono">t+1</span> nonzero entries</td></tr>
+    <tr><td>values</td><td><span class="mono">v = value(x)</span></td><td><span class="mono">(4, 8, 16)</span></td><td>what each position is willing to broadcast</td></tr>
+    <tr><td>output</td><td><span class="mono">out = wei @ v</span></td><td><span class="mono">(4, 8, 16)</span></td><td><span class="mono">(B, T, head_size)</span> — not <span class="mono">C</span>; part 6 fixes that</td></tr>
+  </table>
+
+  <p>The single most important line in that table is the fourth, because of what it does <em>not</em> change: the shape. Part 3's <span class="mono">wei</span> was <span class="mono">(T, T)</span> — one matrix, broadcast identically across all four sequences, since it was built from constants. Now it is <span class="mono">(B, T, T)</span>: every sequence in the batch gets its own affinity matrix, because every sequence contains different characters at different positions. Karpathy pauses on exactly this when he prints the tensor at <a href="https://youtu.be/kCc8FmEb1nY?t=4049" target="_blank" rel="noopener">67:29</a> — the rows are no longer uniform, and batch element 0 no longer looks like batch element 1. (The auto-captions garble his conclusion there into "so this is not data dependent"; he is saying the opposite.) That extra <span class="mono">B</span> is the whole difference between a hand-designed smoothing filter and a learned one.</p>
+
+  <h2>Mask, then softmax — in that order</h2>
+
+  <p>The mask and the softmax are inherited unchanged from part 3, which is a nice piece of engineering economy, but their interaction is worth spelling out because it is the piece students most often reimplement wrongly. <span class="mono">tril</span> is a lower-triangular matrix of ones; <span class="mono">masked_fill(tril == 0, float('-inf'))</span> writes <span class="mono">-inf</span> into every position where <span class="mono">tril</span> is zero, which is the strictly-upper triangle — the future. Then <span class="mono">softmax</span> exponentiates: <span class="mono">exp(-inf) = 0</span>, so those entries contribute exactly zero to the row sum and exactly zero to the normalized weights. The masked positions are not merely down-weighted, they are gone, and no gradient flows back through them.</p>
+
+  <p>Order matters and so does the axis. Masking before the softmax is what makes the surviving weights renormalize to sum to one; masking after would leave rows summing to less than one and shrink later positions' outputs. And <span class="mono">dim=-1</span> normalizes across the <em>key</em> axis, so each query's weights over the tokens it can see form a distribution. Softmaxing over <span class="mono">dim=-2</span> instead would normalize each key's outgoing attention — a coherent-looking tensor of the same shape that trains to nothing useful, and one of the more painful silent bugs in this code.</p>
+
+  <p>Karpathy makes this visible by temporarily deleting the mask and the softmax at <a href="https://youtu.be/kCc8FmEb1nY?t=4141" target="_blank" rel="noopener">69:01</a>, so you can see the raw dot products, which at initialization sit roughly in the range −2 to +2 and are as happy to be negative as positive. Then he puts the two lines back: clamp the future, exponentiate, normalize. Those raw scores are also where the missing <span class="mono">1/√head_size</span> factor belongs — part 5's sixth note — and its absence here is deliberate. Without the scale, the variance of the scores grows with <span class="mono">head_size</span> (about 16 in this toy), softmax starts to saturate toward one-hot, and the head degenerates into copying a single earlier token. The version-4 cell is correct in structure and slightly wrong in calibration, and Karpathy fixes it eight minutes later.</p>
+
+  <h2>Why we aggregate <span class="mono">v</span> and not <span class="mono">x</span></h2>
+
+  <p>The last move is the least obvious and the easiest to drop when reimplementing from memory. Having computed the weights, you could aggregate <span class="mono">x</span> directly — <span class="mono">out = wei @ x</span> — and get a data-dependent weighted average of the raw residual-stream vectors. Karpathy adds a third projection instead and aggregates <span class="mono">v = value(x)</span>. His framing is the one to keep:</p>
+
+  <blockquote class="q off">Here's what I'm interested in, here's what I have, and if you find me interesting, here's what I will communicate to you.<span class="cite">Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=4266" target="_blank" rel="noopener">71:06</a></span></blockquote>
+
+  <p>So <span class="mono">x</span> is private and <span class="mono">v</span> is public. A token's residual vector carries everything it knows — its identity, its position, whatever earlier layers wrote there — and most of that is nobody else's business. The value projection is the model's chance to decide, per head, which slice of that private state is worth broadcasting when someone attends to it. Mechanically it also decouples two things that have no business being coupled: what makes a token <em>findable</em> (its key) and what a token <em>delivers</em> once found (its value). Without the value projection those are the same vector, and a head can only route information it can also match on.</p>
+
+  <p>The output is <span class="mono">(B, T, head_size)</span> — sixteen channels, not thirty-two. This head is not a drop-in replacement for the residual stream yet; something has to get it back to <span class="mono">C</span>. That something is multi-head attention plus an output projection in part 6, and the fact that <span class="mono">head_size</span> came out smaller than <span class="mono">C</span> is precisely what makes concatenating several heads work out.</p>
+
+  <div class="callout off">Carry this away: <b>attention is a learned, directed, data-dependent weighted average, and it is the only place in the transformer where positions talk to each other.</b> Everything else — the feed-forward layers, LayerNorm, residuals, the whole depth of the stack — operates on each position independently. If you can say what <span class="mono">q</span>, <span class="mono">k</span> and <span class="mono">v</span> are for and why <span class="mono">wei</span> gains a batch dimension the moment they exist, you have the part of this video the rest of the field is built on.</div>
+
+  <h2>What this cell is still missing</h2>
+
+  <p>It is useful to be explicit about the gap between the notebook cell at 71:38 and the <span class="mono">Head</span> class in the finished script, because four separate things get added later and it is easy to conflate them. The scaling factor <span class="mono">* k.shape[-1]**-0.5</span> arrives in part 5. The <span class="mono">tril</span> becomes a registered buffer (a tensor that moves with <span class="mono">.to(device)</span> and gets saved with the model, but is not a parameter and receives no gradient) sliced as <span class="mono">self.tril[:T, :T]</span>, so that generation can run with fewer than <span class="mono">block_size</span> tokens of context. Dropout on the attention weights arrives in part 7. And the head has to be multiplied and projected back to <span class="mono">n_embd</span> in part 6. None of that changes the mechanism; all of it is required to train.</p>
+
+  <table class="kv">
+    <tr><th>Symbol</th><th>Notebook at 62:00</th><th>gpt.py, final</th><th>Meaning</th></tr>
+    <tr><td><span class="mono">B</span></td><td>4</td><td><span class="mono">batch_size</span> = 64</td><td>independent sequences per step</td></tr>
+    <tr><td><span class="mono">T</span></td><td>8</td><td><span class="mono">block_size</span> = 256</td><td>maximum context length</td></tr>
+    <tr><td><span class="mono">C</span></td><td>32</td><td><span class="mono">n_embd</span> = 384</td><td>residual-stream width</td></tr>
+    <tr><td><span class="mono">head_size</span></td><td>16</td><td><span class="mono">n_embd // n_head</span> = 64</td><td>width of one head's q/k/v space</td></tr>
+    <tr><td><span class="mono">n_head</span></td><td>1 (implicit)</td><td>6</td><td>heads run in parallel per block</td></tr>
+  </table>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <p>Below is the <span class="mono">Head</span> class as it stands in the finished <a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L64-L90" target="_blank" rel="noopener">gpt.py</a>. Lines 83–89 are the version-4 cell of this part, verbatim in substance; the scale factor on line 83, the buffer on line 72 and the dropout on line 86 are the later additions listed above.</p>
+
+  <pre class="code-block"><code>class Head(nn.Module):
+    """ one head of self-attention """
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # input of size (batch, time-step, channels)
+        # output of size (batch, time-step, head size)
+        B,T,C = x.shape
+        k = self.key(x)   # (B,T,hs)
+        q = self.query(x) # (B,T,hs)
+        # compute attention scores ("affinities")
+        wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -&gt; (B, T, T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
+        wei = F.softmax(wei, dim=-1) # (B, T, T)
+        wei = self.dropout(wei)
+        # perform the weighted aggregation of the values
+        v = self.value(x) # (B,T,hs)
+        out = wei @ v # (B, T, T) @ (B, T, hs) -&gt; (B, T, hs)
+        return out</code></pre>
+
+  <p>Reading it line by line against the blob:</p>
+
+  <ul>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L69-L71" target="_blank" rel="noopener">L69–L71</a> — the three projections, all <span class="mono">n_embd → head_size</span>, all bias-free. These are the only parameters a head has: <span class="mono">3 × n_embd × head_size</span> weights, which for the final config is 3 × 384 × 64 = 73,728 per head.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L72" target="_blank" rel="noopener">L72</a> — <span class="mono">register_buffer</span> puts the <span class="mono">block_size × block_size</span> triangle in the module's state without making it a parameter, so it follows the model onto the GPU and gets no gradient.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L79-L81" target="_blank" rel="noopener">L79–L81</a> — unpack the shape, project. Nothing has communicated yet.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L83" target="_blank" rel="noopener">L83</a> — the only line where positions interact. <span class="mono">k.shape[-1]</span> is <span class="mono">head_size</span>, so <span class="mono">**-0.5</span> is <span class="mono">1/√head_size</span>. Note the video's own correction: at 01:20:05 Karpathy normalizes by <span class="mono">C</span> rather than <span class="mono">head_size</span> on screen; the script here is the correct version.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L84" target="_blank" rel="noopener">L84</a> — <span class="mono">self.tril[:T, :T]</span> crops to the current sequence length, which matters during generation when the context is shorter than <span class="mono">block_size</span>. Broadcasting handles the missing batch dimension: a <span class="mono">(T,T)</span> boolean mask applies to every element of a <span class="mono">(B,T,T)</span> tensor.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L85-L89" target="_blank" rel="noopener">L85–L89</a> — normalize across keys, drop out some of the attention edges during training, project the values, and aggregate. The output leaves the head at <span class="mono">head_size</span> width.</li>
+  </ul>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"Why <span class="mono">transpose(-2, -1)</span> instead of <span class="mono">.T</span>?"</b> — because <span class="mono">k</span> is three-dimensional. <span class="mono">.T</span> means "reverse every dimension" (current PyTorch deprecates it on 3-D tensors precisely because that is rarely what anyone wants), and <span class="mono">transpose(0, 1)</span> swaps batch with time — which produces a tensor of a perfectly plausible shape while silently mixing sequences together. Negative indices name the last two axes regardless of how many batch-like dimensions sit in front, which is why nanoGPT can reuse the identical expression on a four-dimensional <span class="mono">(B, nh, T, hs)</span> tensor.</li>
+    <li><b>The mask direction, and the video's own erratum.</b> <span class="mono">tril</span> keeps the <em>lower</em> triangle, so <span class="mono">tril == 0</span> selects the strictly-upper triangle and that is what gets <span class="mono">-inf</span>. Row <span class="mono">t</span> therefore attends to columns <span class="mono">0…t</span> inclusive — the past and itself. Karpathy misspeaks about this at 57:00 and posts a correction in the description: it is tokens from the <em>future</em> that cannot communicate, not the past.</li>
+    <li><b>Softmax over the wrong axis.</b> <span class="mono">dim=-1</span> makes each query's row a distribution over the keys it can see. <span class="mono">dim=-2</span> or <span class="mono">dim=1</span> produces a tensor of exactly the same shape that normalizes columns instead — no error, no warning, just a model that trains badly. If you are debugging a from-scratch head, print <span class="mono">wei.sum(-1)</span> and confirm it is all ones.</li>
+    <li><b>Expecting the attention matrix to be symmetric.</b> It is not, and it should not be. Different weight matrices produce <span class="mono">q</span> and <span class="mono">k</span>, so <span class="mono">wei[i, j] ≠ wei[j, i]</span> in general — and under the causal mask only one of the two is ever visible anyway. "Attention" here means directed routing, not distance.</li>
+    <li><b>Forgetting that <span class="mono">out</span> is <span class="mono">head_size</span> wide, not <span class="mono">C</span>.</b> A single head cannot be dropped into a residual stream, because <span class="mono">x + head(x)</span> will not broadcast. That mismatch is not a bug in this part; it is the setup for multi-head attention and the output projection in part 6.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Attention Is All You Need</a> — Vaswani et al. (2017) · §3.2.1 is the equation this part implements, scaling factor included. Read it after watching, not before; the notation is much easier once you have seen the shapes move.</li>
+    <li><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L64-L90" target="_blank" rel="noopener">ng-video-lecture · gpt.py, class Head</a> — Karpathy (2023) · the twenty-seven lines this part produces, with the shape comments he types on screen.</li>
+    <li><a href="https://github.com/karpathy/nanoGPT/blob/master/model.py#L29-L76" target="_blank" rel="noopener">nanoGPT · CausalSelfAttention</a> — Karpathy (2022–) · the same math with all heads batched into one <span class="mono">(B, nh, T, hs)</span> tensor and one fused <span class="mono">c_attn</span> projection producing q, k and v at once. This is the answer to Karpathy's EX1 and the version you would actually ship.</li>
+    <li><a href="https://jalammar.github.io/illustrated-transformer/" target="_blank" rel="noopener">The Illustrated Transformer</a> — Jay Alammar (2018) · the picture-first account of the same mechanism. Useful as a second pass if the matrix shapes are clear but the intuition is not.</li>
+    <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html" target="_blank" rel="noopener">torch.nn.functional.scaled_dot_product_attention</a> — PyTorch docs · <em>field map extra.</em> Modern PyTorch collapses lines 83–89 into a single call with <span class="mono">is_causal=True</span>. Worth reading the signature to see which of the pieces in this part became arguments.</li>
+    <li><a href="https://arxiv.org/abs/2205.14135" target="_blank" rel="noopener">FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</a> — Dao et al. (2022) · <em>field map extra.</em> The <span class="mono">(B, T, T)</span> tensor in the middle of this part is quadratic in context length and is the reason long contexts were expensive; FlashAttention computes the same result without ever materializing it.</li>
+    <li><a href="https://arxiv.org/abs/2104.09864" target="_blank" rel="noopener">RoFormer: Enhanced Transformer with Rotary Position Embedding</a> — Su et al. (2021) · <em>field map extra.</em> Part 3 added positions by summing a learned table into <span class="mono">x</span>; RoPE instead rotates <span class="mono">q</span> and <span class="mono">k</span> so that the dot product itself becomes a function of relative distance. Nearly every open model since 2023 does it this way.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>Shapes and parameter count by hand</b> — before running anything, write out for <span class="mono">B,T,C = 4,8,32</span> and <span class="mono">head_size = 16</span>: the shape after each of the eight steps in the table above, the number of learnable parameters in one <span class="mono">Head</span>, and how many of the 64 entries of one batch element's <span class="mono">wei</span> are nonzero after the mask and softmax. A good answer gets 1,536 parameters (three bias-free 32×16 matrices) and 36 nonzero entries (1+2+…+8), and can say why the parameter count does not depend on <span class="mono">T</span>.</li>
+    <li><b>Delete the mask, and watch the loss lie to you</b> <span class="code">code</span> — in the Colab, comment out the <span class="mono">masked_fill</span> line so every position sees the whole sequence (this is the encoder block of part 5's note 4). Retrain briefly and record: (1) what happens to the training loss, (2) what happens to the validation loss, (3) what the generated text looks like. A good answer explains that the loss drops implausibly because each position can now read the token it is being asked to predict, and notes that generation is nonsense because at sample time there is no future to read.</li>
+    <li><b>Ablate the value projection</b> <span class="code">code</span> — change the last line of <span class="mono">Head.forward</span> to <span class="mono">out = wei @ x</span> and adjust the surrounding code so the widths still line up. Train it for the same number of steps as the unmodified model and compare validation loss. Then, on the trained original, take one batch, capture <span class="mono">wei</span> for a single head, and print the attention row for a position in the middle of a word. Steps: register a forward hook on the head, run one batch, index <span class="mono">wei[0, t]</span>, and map the column indices back to characters with <span class="mono">decode</span>. A good answer reports a measurable gap in favour of the value projection and shows at least one row where the mass concentrates on something interpretable — the previous character, or the last newline.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p05.html">P05 Six notes on attention</a> · Back to the <a class="lnk" href="../index.html#attention">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023), part 04. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>

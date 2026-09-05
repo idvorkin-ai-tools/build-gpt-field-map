@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>P07 Scaling up: hyperparameters, dropout, the final gpt.py, nanoGPT — Let's build GPT, mapped</title>
+<meta name="description" content="The 10.8M-parameter run that reaches val loss 1.48, where dropout goes, why this is a decoder-only Transformer, and how nanoGPT batches all six heads into one matmul." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../paper.css" />
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="../index.html#transformer">← field map</a>
+</div></header>
+<main>
+  <div class="eyebrow"><span class="box bb mono">PART 07 · ASSEMBLING THE TRANSFORMER</span><span class="mono">97:49–108:53 · 11 min</span></div>
+  <h1>Scaling up: hyperparameters, dropout, the final gpt.py, nanoGPT</h1>
+  <div class="authors">Andrej Karpathy · Let's build GPT (2023) · part 07 of 8</div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Video</span><a href="https://youtu.be/kCc8FmEb1nY?t=5869" target="_blank" rel="noopener">Start this part at 97:49 ↗</a></div>
+  <div class="paperlink" style="border-left-color:var(--def)"><span class="lbl">Code</span><a href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L5-L16" target="_blank" rel="noopener">gpt.py · the final hyperparameter block, and the model it builds ↗</a></div>
+  <p class="mono" style="font-size:12.5px;color:var(--ink-dim)">Transcript: <a class="lnk" href="../transcript.html#s-5869">this part, with timestamps</a></p>
+
+  <div class="tldr"><b>TL;DR —</b> The architecture stopped changing at the end of P6; this part only turns the knobs. Karpathy parameterises depth and width (<span class="mono">n_layer</span>, <span class="mono">n_head</span>), adds dropout at three points because he is about to make the model roughly forty times bigger, and reruns at <span class="mono">n_embd=384</span>, 6 heads, 6 layers, <span class="mono">block_size=256</span> — 10.8 M parameters, ~15 minutes on an A100, validation loss 1.48 down from ~2.07. Then two pieces of orientation: the thing you built is the right-hand half of the 2017 diagram (a decoder, defined by the triangular mask, with no encoder and no cross-attention), and nanoGPT is the same math with all heads folded into one batched matmul — which is exactly Karpathy's exercise EX1.</div>
+
+  <p class="lead">Everything up to 97:49 was <em>construction</em>: each segment added a component and the loss ticked down a hundredth at a time on a toy-sized model. This part is the payoff and the debrief. It answers the question a reader has been holding since the first attention block — <em>does this actually work if you make it real?</em> — and then, having answered yes, spends the remaining eight minutes placing what was built on the map: which part of the original paper it is, which part it deliberately isn't, and what the same code looks like when someone writes it for production rather than for a lecture.</p>
+
+  <h2 id="outline">Outline, with timestamps</h2>
+  <ul class="outline">
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5869" target="_blank" rel="noopener">97:49</a> — Cosmetic refactor: <span class="mono">n_layer</span> and <span class="mono">n_head</span> become variables, blocks become an <span class="mono">nn.Sequential</span>, the final LayerNorm is pulled out.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5897" target="_blank" rel="noopener">98:17</a> — Where dropout goes: on the attention matrix after softmax, and on each residual branch just before it rejoins the stream.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5929" target="_blank" rel="noopener">98:49</a> — What dropout is: random masking each forward/backward pass, read as training an ensemble of subnetworks that merge at test time.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=5960" target="_blank" rel="noopener">99:20</a> — The new hyperparameters: batch 64, context 256, lr 3e-4, 384 channels, 6 heads, 6 layers, dropout 0.2.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6021" target="_blank" rel="noopener">100:21</a> — The result: validation loss 1.48, from roughly 2.07 before scaling.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6052" target="_blank" rel="noopener">100:52</a> — Hardware reality: ~15 minutes on an A100; what to shrink if you have no GPU.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6084" target="_blank" rel="noopener">101:24</a> — Reading a 10,000-character sample: correct Shakespeare <em>shape</em>, no Shakespeare meaning.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6159" target="_blank" rel="noopener">102:39</a> — Encoder vs decoder vs both: why half the famous figure was never implemented.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6208" target="_blank" rel="noopener">103:28</a> — The mask is the definition: translation needs an encoder because the generation is conditioned on something.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6300" target="_blank" rel="noopener">105:00</a> — Cross-attention: queries from the decoder, keys and values from the encoder's output.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6382" target="_blank" rel="noopener">106:22</a> — nanoGPT: <span class="mono">train.py</span> is the messy part, <span class="mono">model.py</span> is nearly what you just wrote.</li>
+    <li><a href="https://youtu.be/kCc8FmEb1nY?t=6428" target="_blank" rel="noopener">107:08</a> — <span class="mono">CausalSelfAttention</span>: all heads as a fourth tensor dimension (this is EX1), then GELU, weight-decay groups, generate.</li>
+  </ul>
+
+  <h2>The refactor comes first, and it is not cosmetic</h2>
+
+  <p>Karpathy calls the first change cosmetic, and in one sense it is: no math moves. But it is the change that makes the rest possible. Up to now the model was written with its shape baked in — one hand-placed block after another, a head size computed inline. He replaces that with three numbers you can turn: <span class="mono">n_layer</span>, <span class="mono">n_head</span>, <span class="mono">n_embd</span>. The blocks become a single <span class="mono">nn.Sequential</span> built from a list comprehension, and the final LayerNorm — the one he added as an afterthought at <a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=5837" target="_blank" rel="noopener">97:17</a>, sitting between the last block and the vocabulary projection — gets its own name, <span class="mono">ln_f</span>.</p>
+
+  <p>The head size is now derived rather than chosen: inside <span class="mono">Block.__init__</span>, <span class="mono">head_size = n_embd // n_head</span>. With 384 channels and 6 heads that is 64 per head, which is the same per-head width GPT-2 and GPT-3 use at every scale — as you widen a model you add heads, not head size. That single line also silently imposes a constraint the lecture code never checks: <span class="mono">n_head</span> must divide <span class="mono">n_embd</span> exactly, or the concatenated heads come out narrower than the residual stream and the addition <span class="mono">x + self.sa(...)</span> fails. nanoGPT asserts it; <span class="mono">gpt.py</span> lets you find out the hard way.</p>
+
+  <h2>Dropout, and why it arrives exactly here</h2>
+
+  <p>Dropout is not part of the architecture argument. It appears at this moment for one reason, which Karpathy is explicit about:</p>
+
+  <blockquote class="q">I added it because I'm about to scale up the model quite a bit and I was concerned about overfitting.<span class="cite">Andrej Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=5960" target="_blank" rel="noopener">99:20</a></span></blockquote>
+
+  <p>The arithmetic behind that worry is worth doing. Tiny Shakespeare is a little over a million characters. The model about to be trained on it has 10.8 million parameters — roughly ten parameters per character of training data. Nothing prevents a network with that much capacity from memorising the corpus outright, and the train/validation gap is where you would see it happen.</p>
+
+  <p>Dropout, from <a class="lnk" href="https://jmlr.org/papers/v15/srivastava14a.html" target="_blank" rel="noopener">Srivastava et al. (2014)</a>, zeroes a random subset of activations on every forward/backward pass. Karpathy gives the standard reading — because the mask is redrawn each pass, you are effectively training an exponentially large family of thinned subnetworks that share weights, and at test time the full network approximates their ensemble — and then declines to go further, pointing at the paper for the detail. That is a fair place to stop for this lecture, but two mechanical facts matter for reading the code:</p>
+
+  <ul class="readings">
+    <li><b>PyTorch uses inverted dropout.</b> <span class="mono">nn.Dropout(p)</span> zeroes a fraction <span class="mono">p</span> of entries <em>and</em> scales the survivors by <span class="mono">1/(1-p)</span> during training, so the expected value of the tensor is unchanged and evaluation needs no rescaling at all. At <span class="mono">dropout=0.2</span> the survivors are multiplied by 1.25.</li>
+    <li><b>It is the first module in this codebase whose behaviour differs between train and eval.</b> The <span class="mono">model.eval()</span> / <span class="mono">model.train()</span> pair inside <span class="mono">estimate_loss</span> was written back in the bigram section and has been a no-op ever since — LayerNorm behaves identically in both modes. From this commit on, deleting those two lines would quietly corrupt every reported validation number.</li>
+  </ul>
+
+  <p>Karpathy puts dropout in three places, and the placement is the interesting part. Two of them sit at the end of a residual branch, immediately before the branch is added back into the stream: the output projection of multi-head attention (<span class="mono">out = self.dropout(self.proj(out))</span>) and the last layer of the feed-forward <span class="mono">nn.Sequential</span>. That is the canonical position — you are randomly deleting whole contributions to the residual stream, which is what forces the model to spread a computation across redundant paths rather than betting it all on one.</p>
+
+  <p>The third is more unusual and more specific to attention: <span class="mono">wei = self.dropout(wei)</span> sits <em>after</em> the softmax inside <span class="mono">Head.forward</span>. It randomly severs individual token-to-token communication links. A token that has learned to lean entirely on one earlier token will, one pass in five, find that edge gone. Note the side effect: the attention rows are a probability distribution when they leave the softmax, and they are not one after dropout — mass is deleted and the remainder scaled up. The expectation survives; the per-row sum does not. This is exactly what <a class="lnk" href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">the 2017 paper</a> does too (§5.4, with <span class="mono">P<sub>drop</sub></span> = 0.1).</p>
+
+  <h2>The numbers, and what they bought</h2>
+
+  <p>Everything below the model definition is unchanged from the toy run. Only the constants move.</p>
+
+  <table class="kv">
+    <tr><th>Hyperparameter</th><th>Final value</th><th>What it controls, and why this number</th></tr>
+    <tr><td>batch_size</td><td>64</td><td>Independent sequences per step. Doubled from the toy runs — a GPU is idle at 32, and a bigger batch steadies the gradient.</td></tr>
+    <tr><td>block_size</td><td>256</td><td>Context length. Up from 8: 256 characters of history to predict the 257th. This is the axis that costs quadratically.</td></tr>
+    <tr><td>learning_rate</td><td>3e-4</td><td>Lowered, because the network is much bigger. Stated as judgement, not derived — and left constant, with no warmup or decay.</td></tr>
+    <tr><td>n_embd</td><td>384</td><td>Residual-stream width. Up from 32. Divided by 6 heads gives 64 channels per head.</td></tr>
+    <tr><td>n_head</td><td>6</td><td>Heads per block. Must divide <span class="mono">n_embd</span>; nothing in the script checks that it does.</td></tr>
+    <tr><td>n_layer</td><td>6</td><td>Blocks stacked in <span class="mono">nn.Sequential</span>. Residuals plus LayerNorm are what make six trainable at all.</td></tr>
+    <tr><td>dropout</td><td>0.2</td><td>20% of the affected activations zeroed on every forward/backward pass, at three sites.</td></tr>
+    <tr><td>—</td><td>10.788929 M</td><td>Resulting parameter count, printed by the script.</td></tr>
+  </table>
+
+  <p>The reported result is a validation loss of <b>1.48</b>. The comparison point Karpathy quotes is ~2.07, which is the small model with LayerNorm at the end of P6; he gives it as 2.06 a minute earlier and 2.07 here, so read it as "about 2.07" rather than a precise figure. In per-character terms 1.48 nats is roughly 2.14 bits per character — down from about 2.99 bits. Note what did <em>not</em> change: not one line of the model class, the optimiser, the data loader or the loss. The entire improvement came from width, depth and context.</p>
+
+  <p>The parameter count printed by the script is <b>10.788929 M</b>, which he rounds to "about 10 million". If you want to check your own understanding of the architecture, that number is fully derivable: each block is 1,773,312 parameters (442,368 of key/query/value with no bias, 147,840 for the output projection, 1,181,568 for the two feed-forward matrices, 1,536 for the two LayerNorms), times six, plus 24,960 of token embeddings, 98,304 of position embeddings, 768 for <span class="mono">ln_f</span> and 25,025 for the language-model head.</p>
+
+  <div class="callout">Cost, honestly stated: about 15 minutes on an A100. Karpathy says outright not to attempt this configuration on a CPU or a laptop — shrink <span class="mono">n_layer</span>, <span class="mono">n_embd</span> and <span class="mono">block_size</span> instead. A free Colab GPU will run it, several times slower. This is also the first moment in the lecture where the code stops being interactive: you launch it and come back.</div>
+
+  <p>The sample he prints is 10,000 characters written to a file rather than the 300-character dribble from earlier runs, and it is worth looking at for what it gets right. Speaker names on their own lines, colons, act-like line lengths, plausible early-modern morphology, correctly balanced apostrophes. It has learned the <em>form</em> of the document with no supervision of any kind about form. It has learned nothing about meaning, because at one million characters and character-level granularity there is not enough signal to learn any. That gap — perfect surface, absent content — is the single most useful intuition to take out of this run, and it is the thing that scale, in the next part, closes.</p>
+
+  <h2>Which half of the paper this is</h2>
+
+  <p>Karpathy now points at Figure 1 of <a class="lnk" href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Attention Is All You Need</a> and accounts for the parts he never implemented. The figure has two towers. The right-hand one is what you built; the left-hand one, the encoder, does not exist in this codebase, and neither does the middle attention block inside the decoder that connects them.</p>
+
+  <p>The distinction is not architectural in any deep sense — encoder and decoder blocks are the same code — it is <em>one line</em>:</p>
+
+  <blockquote class="q">what makes it a decoder is that we are using the triangular mask.<span class="cite">Andrej Karpathy, <a href="https://youtu.be/kCc8FmEb1nY?t=6208" target="_blank" rel="noopener">103:28</a></span></blockquote>
+
+  <p>Delete <span class="mono">wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))</span> and every token attends to every other token in both directions; you have an encoder, useful for producing representations, useless for generation because position <em>t</em> has already seen its own answer. Keep the mask and you have the autoregressive property that makes sampling well-defined.</p>
+
+  <p>The 2017 paper needed both towers because it was a machine-translation paper. The generation there is <em>conditional</em>: emit English, given a French sentence. So the French is run through an unmasked encoder — all tokens free to talk — and its output is fed into every decoder block through a third attention module. In that module the queries come from the decoder's own residual stream while the keys and values come from the encoder's output. That asymmetry is the whole of cross-attention: the decoder asks the questions, the encoded source supplies the content. Special <span class="mono">&lt;start&gt;</span> and <span class="mono">&lt;end&gt;</span> tokens bracket the generation.</p>
+
+  <p>This lecture's model is unconditional — there is nothing to condition on, just a corpus to imitate — so the encoder and the cross-attention have nothing to do and are simply absent. That is what "decoder-only" means, and it is the configuration GPT uses. Worth knowing for reading modern code: an instruction-tuned chat model is still decoder-only. The prompt is not encoded separately; it is just earlier tokens in the same masked stream.</p>
+
+  <h2>nanoGPT: the same model, with the heads batched</h2>
+
+  <p>The last three minutes are a tour of <a class="lnk" href="https://github.com/karpathy/nanoGPT" target="_blank" rel="noopener">nanoGPT</a>, and the framing is useful: <span class="mono">train.py</span> is where all the complexity you have been spared lives — checkpointing, learning-rate decay, <span class="mono">torch.compile</span>, distributed training across GPUs — while <span class="mono">model.py</span> is recognisably the file you just wrote. The <span class="mono">Block</span> is line-for-line identical in structure. <span class="mono">GPT.forward</span> does token embeddings, position embeddings, the blocks, a final LayerNorm, a linear head.</p>
+
+  <p>The one real difference is <span class="mono">CausalSelfAttention</span>, and it is the answer to Karpathy's first suggested exercise. In <span class="mono">gpt.py</span>, a <span class="mono">Head</span> is a module and <span class="mono">MultiHeadAttention</span> holds six of them in an <span class="mono">nn.ModuleList</span>, running a Python loop and concatenating. Mathematically fine, computationally wasteful: six small matmuls that the GPU launches one at a time. nanoGPT does the identical arithmetic in one pass by promoting the head index to a tensor dimension:</p>
+
+  <ul class="readings">
+    <li><b>One fused projection.</b> <span class="mono">c_attn</span> is a single <span class="mono">nn.Linear(n_embd, 3 * n_embd)</span> producing queries, keys and values for all heads at once; <span class="mono">.split(n_embd, dim=2)</span> cuts the result into three <span class="mono">(B, T, C)</span> tensors. Eighteen small matrices in <span class="mono">gpt.py</span> become one.</li>
+    <li><b>Reshape, then transpose.</b> <span class="mono">view(B, T, nh, hs).transpose(1, 2)</span> gives <span class="mono">(B, nh, T, hs)</span>. The last two dimensions are now exactly the matrix a single head works on, and <span class="mono">B</span> and <span class="mono">nh</span> are both just batch dimensions that <span class="mono">@</span> broadcasts over. <span class="mono">q @ k.transpose(-2, -1)</span> yields <span class="mono">(B, nh, T, T)</span> — every head's attention matrix, computed together.</li>
+    <li><b>The mask gains two dummy axes.</b> <span class="mono">tril</span> is registered as <span class="mono">(1, 1, block_size, block_size)</span> so it broadcasts across batch and head. Same mask, same direction, same <span class="mono">-inf</span>.</li>
+    <li><b>Reassembly is the concatenate.</b> <span class="mono">y.transpose(1, 2).contiguous().view(B, T, C)</span> puts head outputs side by side in the channel dimension — which is precisely what <span class="mono">torch.cat(..., dim=-1)</span> did in the lecture version, just without materialising six tensors. The <span class="mono">.contiguous()</span> is required: after a transpose the memory layout no longer matches the logical order and <span class="mono">view</span> refuses.</li>
+    <li><b>Flash attention if available.</b> When PyTorch ≥ 2.0 is present, all four of the manual lines collapse into <span class="mono">F.scaled_dot_product_attention(q, k, v, is_causal=True)</span>, which fuses scale/mask/softmax/dropout/matmul into one kernel that never writes the <span class="mono">(B, nh, T, T)</span> matrix to memory. Same numbers, far less memory traffic.</li>
+  </ul>
+
+  <p>Karpathy flags two other cosmetic differences: the MLP uses GELU rather than ReLU purely so OpenAI's GPT-2 checkpoints load cleanly, and the optimiser splits parameters into weight-decayed and non-decayed groups. One more, which he does not mention and which is easy to miss: nanoGPT ties the token embedding and the output head (<span class="mono">wte.weight = lm_head.weight</span>), and its <span class="mono">get_num_params</span> subtracts position embeddings by default — so its printed counts are not comparable to <span class="mono">gpt.py</span>'s.</p>
+
+  <div class="callout">Carry away: after 97:49 nothing about the <em>model</em> changes again. The 10.8 M-parameter Shakespeare babbler and a frontier model differ in three numbers (width, depth, data) and an enormous amount of infrastructure — not in the forward pass. Everything from here on is scale, tokenisation and post-training.</div>
+
+  <h2 id="code">The code at the end of this part</h2>
+
+  <p>This is <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py" target="_blank" rel="noopener">gpt.py</a> — the final script. The excerpt below is the part this section produced: the scaled hyperparameters, the three dropout sites, and the assembled model.</p>
+
+  <pre class="code-block"><code># hyperparameters
+batch_size = 64 # how many independent sequences will we process in parallel?
+block_size = 256 # what is the maximum context length for predictions?
+max_iters = 5000
+eval_interval = 500
+learning_rate = 3e-4
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+eval_iters = 200
+n_embd = 384
+n_head = 6
+n_layer = 6
+dropout = 0.2
+# ------------
+
+class Head(nn.Module):
+    """ one head of self-attention """
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        # input of size (batch, time-step, channels)
+        # output of size (batch, time-step, head size)
+        B,T,C = x.shape
+        k = self.key(x)   # (B,T,hs)
+        q = self.query(x) # (B,T,hs)
+        # compute attention scores ("affinities")
+        wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, hs) @ (B, hs, T) -&gt; (B, T, T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
+        wei = F.softmax(wei, dim=-1) # (B, T, T)
+        wei = self.dropout(wei)
+        # perform the weighted aggregation of the values
+        v = self.value(x) # (B,T,hs)
+        out = wei @ v # (B, T, T) @ (B, T, hs) -&gt; (B, T, hs)
+        return out
+
+class MultiHeadAttention(nn.Module):
+    """ multiple heads of self-attention in parallel """
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(head_size * num_heads, n_embd)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.dropout(self.proj(out))
+        return out
+
+class FeedFoward(nn.Module):
+    """ a simple linear layer followed by a non-linearity """
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class Block(nn.Module):
+    """ Transformer block: communication followed by computation """
+
+    def __init__(self, n_embd, n_head):
+        # n_embd: embedding dimension, n_head: the number of heads we'd like
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size)
+        self.ffwd = FeedFoward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x
+
+class GPTLanguageModel(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        # each token directly reads off the logits for the next token from a lookup table
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(n_embd) # final layer norm
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        # idx and targets are both (B,T) tensor of integers
+        tok_emb = self.token_embedding_table(idx) # (B,T,C)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
+        x = tok_emb + pos_emb # (B,T,C)
+        x = self.blocks(x) # (B,T,C)
+        x = self.ln_f(x) # (B,T,C)
+        logits = self.lm_head(x) # (B,T,vocab_size)
+        ...
+
+    def generate(self, idx, max_new_tokens):
+        # idx is (B, T) array of indices in the current context
+        for _ in range(max_new_tokens):
+            # crop idx to the last block_size tokens
+            idx_cond = idx[:, -block_size:]
+            ...
+
+model = GPTLanguageModel()
+m = model.to(device)
+# print the number of parameters in the model
+print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')</code></pre>
+
+  <p>Reading it block by block. <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L5-L16" target="_blank" rel="noopener">L5–L16</a> is the only thing that changed to get from 2.07 to 1.48. <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L86" target="_blank" rel="noopener">L86</a> is attention dropout, applied to a <span class="mono">(B, T, T)</span> tensor after the softmax has already normalised each row. <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L103" target="_blank" rel="noopener">L103</a> and <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L115" target="_blank" rel="noopener">L115</a> are the two residual-branch dropouts, each the last operation before its branch is added back into the stream at <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L134-L135" target="_blank" rel="noopener">L134–L135</a>. <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L145" target="_blank" rel="noopener">L145</a> is the depth knob — six <span class="mono">Block</span>s wrapped in <span class="mono">nn.Sequential</span> so <span class="mono">self.blocks(x)</span> runs the whole stack. Shapes through <span class="mono">forward</span>: <span class="mono">idx</span> is <span class="mono">(64, 256)</span> integers; <span class="mono">tok_emb</span> is <span class="mono">(64, 256, 384)</span>; <span class="mono">pos_emb</span> is <span class="mono">(256, 384)</span> and broadcasts across the batch; every block preserves <span class="mono">(64, 256, 384)</span>; <span class="mono">lm_head</span> produces <span class="mono">(64, 256, 65)</span>, which is flattened to <span class="mono">(16384, 65)</span> against 16,384 targets for the cross-entropy.</p>
+
+  <p><b>One drift to be aware of.</b> The <span class="mono">gpt.py</span> in the repo today contains an <span class="mono">_init_weights</span> method and a <span class="mono">self.apply(self._init_weights)</span> call at <a class="lnk" href="https://github.com/karpathy/ng-video-lecture/blob/master/gpt.py#L149-L158" target="_blank" rel="noopener">L149–L158</a>, added after the recording — its own comment says "not covered in the original GPT video". If you are following along keystroke by keystroke and your file does not have it, you have not made a mistake. It initialises Linear and Embedding weights from a normal with std 0.02, which is what GPT-2 does, and it matters more than the lecture lets on: the default PyTorch initialisation trains fine here but converges from a worse starting point.</p>
+
+  <p>For contrast, the batched form from <a class="lnk" href="https://github.com/karpathy/nanoGPT/blob/master/model.py" target="_blank" rel="noopener">nanoGPT's model.py</a> — the same arithmetic with <span class="mono">nh</span> as a fourth dimension:</p>
+
+  <pre class="code-block"><code>    def forward(self, x):
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -&gt; (B, nh, T, T)
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -&gt; (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y</code></pre>
+
+  <p>Line for line this maps onto <span class="mono">Head.forward</span> plus <span class="mono">MultiHeadAttention.forward</span>, with two tensor dimensions where the lecture had one and a Python loop. The <span class="mono">self.bias</span> buffer is nanoGPT's name for <span class="mono">tril</span> — an unfortunate collision with the usual meaning of "bias", and a reliable source of confusion when reading the file cold.</p>
+
+  <h2 id="watch">Where people get stuck</h2>
+  <ul class="readings">
+    <li><b>"My generate crashes with an index error at 256 tokens."</b> The bigram version of <span class="mono">generate</span> fed the whole running sequence back in, which was harmless because that model had no positional embeddings. Now <span class="mono">position_embedding_table</span> has exactly <span class="mono">block_size</span> rows, and <span class="mono">torch.arange(T)</span> indexes past the end the moment the context exceeds 256. The fix is the one line in <span class="mono">gpt.py</span> that the earlier script lacks: <span class="mono">idx_cond = idx[:, -block_size:]</span>. Cropping is not an optimisation, it is a correctness requirement.</li>
+    <li><b>"Validation loss looks different every time I evaluate, and worse than training."</b> Two separate things. The noise is because <span class="mono">estimate_loss</span> averages a random sample of <span class="mono">eval_iters</span> batches, not the whole split. The gap is real and is what dropout was added to control — but only if <span class="mono">model.eval()</span> is actually being called. Dropout is the first layer in this codebase for which train and eval mode differ; before this part those calls did nothing, so they are easy to have dropped while refactoring.</li>
+    <li><b>"Why doesn't my batched attention match the loop version?"</b> Almost always the reshape. From <span class="mono">(B, T, C)</span> you must <span class="mono">view(B, T, nh, hs)</span> and <em>then</em> <span class="mono">transpose(1, 2)</span> — reshaping straight to <span class="mono">(B, nh, T, hs)</span> interleaves the wrong elements, because the head index is the slower-varying part of the channel axis, not of the time axis. Coming back, <span class="mono">transpose(1, 2)</span> then <span class="mono">.contiguous().view(B, T, C)</span>; without <span class="mono">.contiguous()</span> PyTorch raises rather than silently reordering. Sanity-check by running both implementations on the same input with dropout at 0 and asserting <span class="mono">torch.allclose</span>.</li>
+    <li><b>"Is a decoder-only model unable to see the prompt?"</b> A common misreading of the encoder/decoder discussion. The mask stops a token seeing the <em>future</em>, not the prompt — prompt tokens are simply earlier positions in the same sequence, and every generated token attends to all of them. Encoders are for when the conditioning input is a genuinely separate sequence that should be read bidirectionally, as a source sentence is in translation.</li>
+  </ul>
+
+  <h2 id="materials">Go deeper, verified</h2>
+  <ul class="readings">
+    <li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Attention Is All You Need</a> — Vaswani et al. (2017) · Figure 1 is the diagram being accounted for here; §3.2.3 enumerates the three places attention is used (encoder self-attention, masked decoder self-attention, encoder–decoder cross-attention) and §5.4 is the dropout recipe.</li>
+    <li><a href="https://github.com/karpathy/nanoGPT/blob/master/model.py" target="_blank" rel="noopener">nanoGPT model.py</a> — Karpathy · <span class="mono">CausalSelfAttention</span> is the published answer to EX1; also the place to read weight tying, the GPT-2 scaled residual init, and <span class="mono">from_pretrained</span>.</li>
+    <li><a href="https://github.com/karpathy/nanoGPT/blob/master/train.py" target="_blank" rel="noopener">nanoGPT train.py</a> — Karpathy · everything the lecture's twenty-line training loop omits: cosine learning-rate decay with warmup, gradient accumulation, mixed precision, checkpointing, DDP.</li>
+    <li><a href="https://jmlr.org/papers/v15/srivastava14a.html" target="_blank" rel="noopener">Dropout: A Simple Way to Prevent Neural Networks from Overfitting</a> — Srivastava, Hinton, Krizhevsky, Sutskever &amp; Salakhutdinov (2014) · the paper Karpathy points at; §7.5 covers the inverted-dropout test-time scaling that PyTorch implements for you.</li>
+    <li><a href="https://arxiv.org/abs/1606.08415" target="_blank" rel="noopener">Gaussian Error Linear Units (GELUs)</a> — Hendrycks &amp; Gimpel (2016) · the nonlinearity nanoGPT uses in place of ReLU, kept for GPT-2 checkpoint compatibility.</li>
+    <li><a href="https://arxiv.org/abs/2205.14135" target="_blank" rel="noopener">FlashAttention</a> — Dao, Fu, Ermon, Rudra &amp; Ré (2022) · <em>field map extra</em> · what <span class="mono">F.scaled_dot_product_attention</span> dispatches to; it computes exactly the same result without ever materialising the T×T matrix, which is why long contexts became affordable after 2022.</li>
+    <li><a href="https://arxiv.org/abs/1608.05859" target="_blank" rel="noopener">Using the Output Embedding to Improve Language Models</a> — Press &amp; Wolf (2016) · <em>field map extra</em> · weight tying, the one nanoGPT line with no counterpart in <span class="mono">gpt.py</span>; at character-level vocabularies it barely matters, at 50k tokens it is a large fraction of the parameters.</li>
+  </ul>
+
+  <h2 id="exercises">Exercises</h2>
+  <ol class="exercises">
+    <li><b>EX1 — the n-dimensional tensor mastery challenge</b><span class="code">code</span> — This is Karpathy's own first suggested exercise, and this part is where it belongs. Collapse <span class="mono">Head</span> and <span class="mono">MultiHeadAttention</span> into a single module that processes all heads in parallel by treating the head index as another batch dimension. Steps: (1) replace the three per-head <span class="mono">nn.Linear(n_embd, head_size)</span> layers with one <span class="mono">nn.Linear(n_embd, 3 * n_embd, bias=False)</span> and <span class="mono">.split(n_embd, dim=2)</span>; (2) reshape each of q, k, v with <span class="mono">view(B, T, n_head, hs).transpose(1, 2)</span> and confirm the shape is <span class="mono">(B, nh, T, hs)</span>; (3) register <span class="mono">tril</span> with shape <span class="mono">(1, 1, block_size, block_size)</span> so it broadcasts; (4) reassemble with <span class="mono">transpose(1, 2).contiguous().view(B, T, C)</span> and keep the output projection. A good answer includes a test: build both modules, copy the loop version's weights into the batched one, run the same input with <span class="mono">dropout=0</span> and <span class="mono">model.eval()</span>, and assert <span class="mono">torch.allclose(a, b, atol=1e-6)</span> — getting shapes to line up is easy, getting the weight-copy permutation right is the actual exercise. The published answer is nanoGPT's <span class="mono">CausalSelfAttention</span>; write yours before reading it.</li>
+    <li><b>Fit the run to your machine</b><span class="code">code</span> — The 384/6/6/256 configuration assumes a datacentre GPU. Find the largest configuration that trains in under ten minutes on whatever you have, and record the trade. Sweep three or four points (e.g. 128/4/4/64, 192/6/4/128, 256/8/6/128), and for each log parameter count, wall-clock time and final validation loss. Plot loss against parameters, and separately against wall-clock. A good answer notes which knob bought the most loss per second — and observes that <span class="mono">block_size</span> costs quadratically in time while <span class="mono">n_embd</span> and <span class="mono">n_layer</span> cost linearly, so the cheap and expensive axes are not the ones intuition suggests.</li>
+    <li><b>Ablate dropout, and locate the overfitting</b><span class="code">code</span> — Karpathy adds dropout preemptively and never shows the counterfactual. Run your configuration twice, at <span class="mono">dropout=0.0</span> and at <span class="mono">0.2</span>, logging train and validation loss at every <span class="mono">eval_interval</span>, and plot all four curves on one chart. Then run a third at 0.2 with the attention dropout removed but both residual dropouts kept, to see which of the three sites is doing the work. A good answer states the iteration at which train and validation diverge in each run, whether dropout delays that point or only flattens it, and whether at this data-to-parameter ratio the 0.2 setting is actually paying for itself or is just costing convergence speed.</li>
+  </ol>
+
+  <div class="callout">Next: <a class="lnk" href="p08.html">P08 Back to ChatGPT: pretraining, fine-tuning, RLHF, and what to do next</a> · Back to the <a class="lnk" href="../index.html#transformer">map</a>.</div>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023), part 07. The lecture and code are his; this page links, it does not copy.</footer>
+</body>
+</html>
