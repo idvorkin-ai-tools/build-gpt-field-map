@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Let's build GPT, Mapped — Karpathy's lecture as a field map</title>
+<meta name="description" content="A field map of Andrej Karpathy's 'Let's build GPT: from scratch, in code, spelled out': eight explainer parts linked into the video by timestamp, the code annotated line by line, a cleaned transcript, and exercises." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="paper.css" />
+<style>
+  main{max-width:960px}
+  .hero{padding:24px 0 8px}
+  .hero h1{font-size:clamp(32px,5.5vw,52px);line-height:1.05;margin:10px 0 14px;letter-spacing:-.01em}
+  .hero .sub{font-size:18px;color:var(--ink-dim);max-width:720px;line-height:1.55}
+  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:26px 0 8px}
+  .fact{border:1px solid var(--line-soft);border-radius:8px;padding:12px 14px}
+  .fact .k{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim)}
+  .fact .v{font-size:20px;font-weight:600;margin-top:4px}
+  section{padding:56px 0;border-bottom:1px solid var(--line-soft);scroll-margin-top:64px}
+  section:last-of-type{border-bottom:none}
+  .arc-head{display:flex;align-items:baseline;gap:14px;margin:0 0 6px}
+  .arc-head .idx{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.14em;color:var(--ink-dim)}
+  .arc-head h2{margin:0;font-size:26px}
+  .arc-sub{color:var(--ink-dim);margin:0 0 22px;max-width:680px}
+  .row{display:grid;grid-template-columns:44px 1fr;gap:14px;padding:16px 0;border-top:1px solid var(--line-soft);align-items:start}
+  .row:first-of-type{border-top:none}
+  .row .num{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-dim);padding-top:3px}
+  .row .name{font-weight:600;font-size:17px;line-height:1.3}
+  .row .name a{color:var(--ink)}
+  .row .meta{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-dim);margin:4px 0 6px;display:flex;flex-wrap:wrap;gap:10px}
+  .row .desc{color:var(--ink-dim);font-size:14.5px;line-height:1.55}
+  .amber .row .name a:hover{color:var(--off)} .cyan .row .name a:hover{color:var(--def)}
+  .check{width:16px;height:16px;border:1px solid var(--ink-dim);border-radius:4px;display:inline-block;vertical-align:-3px;margin-right:6px;cursor:pointer;background:transparent}
+  .check.on{background:var(--off);border-color:var(--off)}
+  .cyan .check.on{background:var(--def);border-color:var(--def)}
+  .ex{padding-left:1.25em}
+  .ex li{margin:10px 0;line-height:1.6}
+  .links{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+  .links a{display:block;border:1px solid var(--line-soft);border-radius:8px;padding:12px 14px;color:var(--ink);text-decoration:none}
+  .links a:hover{border-color:var(--def)}
+  .links a b{display:block;font-size:15px;margin-bottom:3px}
+  .links a span{font-size:13px;color:var(--ink-dim)}
+  .progress{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);margin-top:8px}
+</style>
+</head>
+<body>
+<header class="bar"><div class="bar-in">
+  <div class="brand"><span class="dot"></span>LET'S&nbsp;BUILD&nbsp;GPT&nbsp;//&nbsp;FIELD&nbsp;MAP</div>
+  <a class="back" href="https://idvorkin-ai-tools.github.io/">← all maps</a>
+</div></header>
+<main>
+  <div class="hero">
+    <div class="eyebrow"><span class="box wb mono">ANDREJ KARPATHY · 2023</span><span class="mono">1 h 56 min · 31 chapters · 8 parts here</span></div>
+    <h1>Let's build GPT, mapped</h1>
+    <p class="sub">Karpathy writes a GPT from an empty file to a 10-million-parameter Transformer that babbles Shakespeare, and explains every line. This map splits the lecture into eight parts you can read before, during or after watching: what each stretch answers, the tensor shapes, the code it arrives at, where people get stuck, and exercises. Every timestamp opens the video at that moment.</p>
+    <div class="facts">
+      <div class="fact"><div class="k">Watch</div><div class="v"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY" target="_blank" rel="noopener">youtu.be/kCc8FmEb1nY</a></div></div>
+      <div class="fact"><div class="k">Code</div><div class="v"><a class="lnk" href="https://github.com/karpathy/ng-video-lecture" target="_blank" rel="noopener">ng-video-lecture</a></div></div>
+      <div class="fact"><div class="k">Notebook</div><div class="v"><a class="lnk" href="https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing" target="_blank" rel="noopener">Colab</a></div></div>
+      <div class="fact"><div class="k">Transcript</div><div class="v"><a class="lnk" href="transcript.html">cleaned, timestamped</a></div></div>
+    </div>
+    <p class="progress" id="progress">Tick a part when you've worked through it; this browser remembers.</p>
+  </div>
+
+  <section id="baseline" class="amber">
+    <div class="arc-head"><span class="idx">01 · 00:00–42:13</span><h2>Baseline: the problem and the simplest model</h2></div>
+    <p class="arc-sub">Predict the next character of Shakespeare. Set up the data, the tokens, the batches, and a bigram model that already trains, evaluates and generates. Everything after this is making that model look further back.</p>
+    <div class="row"><div class="num"><span class="check" data-p="p01"></span>P1</div><div><div class="name"><a href="parts/p01.html">The setup: the problem, the data, tokens, batches</a></div><div class="meta"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=0" target="_blank" rel="noopener">▶ 00:00</a><span>22 min</span><span>intro · reading the data · tokenization, train/val split · data loader</span></div><div class="desc">Why a character-level model, what the 65-symbol vocabulary is, how a block of text becomes 8 training examples at once, and what B and T mean for the rest of the lecture.</div></div></div>
+    <div class="row"><div class="num"><span class="check" data-p="p02"></span>P2</div><div><div class="name"><a href="parts/p02.html">The bigram baseline: model, loss, generation, training</a></div><div class="meta"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=1331" target="_blank" rel="noopener">▶ 22:11</a><span>20 min</span><span>bigram model · loss · generate() · training loop · port to a script</span></div><div class="desc">A lookup table as a language model, cross-entropy as the score, sampling one character at a time, and the training loop that every later version reuses unchanged.</div></div></div>
+  </section>
+
+  <section id="attention" class="amber">
+    <div class="arc-head"><span class="idx">02 · 42:13–79:11</span><h2>Self-attention, built up in four versions</h2></div>
+    <p class="arc-sub">The heart of the lecture. Karpathy arrives at attention by making "average the past" progressively smarter: a for-loop, then a matrix multiply, then softmax, then learned queries and keys. Then six notes on what the thing actually is.</p>
+    <div class="row"><div class="num"><span class="check" data-p="p03"></span>P3</div><div><div class="name"><a href="parts/p03.html">The mathematical trick: from for-loops to softmax</a></div><div class="meta"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=2533" target="_blank" rel="noopener">▶ 42:13</a><span>20 min</span><span>version 1 · matmul as weighted aggregation · version 2 · version 3 softmax · cleanup · positional encoding</span></div><div class="desc">The lower-triangular matrix that turns "average everything before me" into one matrix multiply, why softmax of a masked zero matrix is the same thing, and where positions enter.</div></div></div>
+    <div class="row"><div class="num"><span class="check" data-p="p04"></span>P4</div><div><div class="name"><a href="parts/p04.html">The crux: self-attention</a></div><div class="meta"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=3720" target="_blank" rel="noopener">▶ 62:00</a><span>10 min</span><span>version 4: queries, keys, values</span></div><div class="desc">Every token emits a query and a key; affinities are their dot products; the mask keeps the future out; values are what gets aggregated. Ten minutes that the whole field rests on.</div></div></div>
+    <div class="row"><div class="num"><span class="check" data-p="p05"></span>P5</div><div><div class="name"><a href="parts/p05.html">Six notes on attention</a></div><div class="meta"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=4298" target="_blank" rel="noopener">▶ 71:38</a><span>8 min</span><span>communication · no notion of space · no cross-batch talk · encoder vs decoder · self vs cross · why divide by √head_size</span></div><div class="desc">Attention as message passing on a directed graph, why it needs positional encodings, what changes when you drop the mask, and the variance argument behind the scaling.</div></div></div>
+  </section>
+
+  <section id="transformer" class="cyan">
+    <div class="arc-head"><span class="idx">03 · 79:11–108:53</span><h2>Assembling the Transformer</h2></div>
+    <p class="arc-sub">One head becomes many, a feed-forward layer gives tokens time to think, residual connections and LayerNorm make it deep, dropout makes it big. Then the same thing as nanoGPT writes it.</p>
+    <div class="row"><div class="num"><span class="check" data-p="p06"></span>P6</div><div><div class="name"><a href="parts/p06.html">Assembling the block: heads, feed-forward, residuals, LayerNorm</a></div><div class="meta"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=4751" target="_blank" rel="noopener">▶ 79:11</a><span>19 min</span><span>single head in the network · multi-head · feed-forward · residual connections · LayerNorm</span></div><div class="desc">Why heads are concatenated, why the MLP is 4× wide, the gradient superhighway that residuals create, and the pre-norm placement that differs from the 2017 paper.</div></div></div>
+    <div class="row"><div class="num"><span class="check" data-p="p07"></span>P7</div><div><div class="name"><a href="parts/p07.html">Scaling up: hyperparameters, dropout, the final gpt.py, nanoGPT</a></div><div class="meta"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=5869" target="_blank" rel="noopener">▶ 97:49</a><span>11 min</span><span>scaling up + dropout · encoder vs decoder vs both · nanoGPT walkthrough</span></div><div class="desc">The 10M-parameter run (val loss 1.48), what dropout does at this size, which half of the original Transformer this is, and how nanoGPT batches all heads into one matmul.</div></div></div>
+  </section>
+
+  <section id="notes" class="cyan">
+    <div class="arc-head"><span class="idx">04 · 108:53–116:20</span><h2>Back to ChatGPT</h2></div>
+    <p class="arc-sub">The distance between a Shakespeare babbler and ChatGPT is pretraining at scale plus fine-tuning and RLHF. Karpathy sketches it; this part fills in what has changed since 2023.</p>
+    <div class="row"><div class="num"><span class="check" data-p="p08"></span>P8</div><div><div class="name"><a href="parts/p08.html">Back to ChatGPT: pretraining, fine-tuning, RLHF, and what to do next</a></div><div class="meta"><a class="lnk" href="https://youtu.be/kCc8FmEb1nY?t=6533" target="_blank" rel="noopener">▶ 108:53</a><span>7 min</span><span>GPT-3 · pretraining vs fine-tuning · RLHF · conclusions · the four exercises</span></div><div class="desc">Document completer to assistant in three stages, why a 10M model and a 175B model are the same code, and the four exercises Karpathy sets, expanded.</div></div></div>
+  </section>
+
+  <section id="exercises">
+    <div class="arc-head"><span class="idx">05</span><h2>Karpathy's four exercises</h2></div>
+    <p class="arc-sub">From the video description. Each part also sets its own smaller exercises; these are the big ones.</p>
+    <ol class="ex">
+      <li><b>EX1 — the n-dimensional tensor mastery challenge.</b> Combine <span class="mono">Head</span> and <span class="mono">MultiHeadAttention</span> into one class that processes all heads in parallel, treating heads as another batch dimension. The answer is in <a class="lnk" href="https://github.com/karpathy/nanoGPT/blob/master/model.py" target="_blank" rel="noopener">nanoGPT's model.py</a>. Covered in <a class="lnk" href="parts/p07.html">P7</a>.</li>
+      <li><b>EX2 — train it on your own data.</b> Any corpus you like; the advanced version is a GPT that adds two numbers (predict the digits of the sum in reverse, serve random problems instead of train.bin, mask the loss on the prompt with <span class="mono">ignore_index=-1</span>). Then the "swole doge" version: a calculator for + − × ÷, which may need chain-of-thought traces. Covered in <a class="lnk" href="parts/p08.html">P8</a>.</li>
+      <li><b>EX3 — pretrain, then fine-tune.</b> Find a dataset so large the train/val gap disappears, pretrain on it, then fine-tune on tiny Shakespeare with fewer steps and a lower learning rate. Does the pretrained start reach a lower validation loss? Covered in <a class="lnk" href="parts/p08.html">P8</a>.</li>
+      <li><b>EX4 — implement one more feature from the papers.</b> Read some Transformer papers and add one change people use. Does it help your GPT? The parts suggest candidates: RoPE (P3), FlashAttention (P4), grouped-query attention (P6), RMSNorm and SwiGLU (P6), weight tying (P7).</li>
+    </ol>
+  </section>
+
+  <section id="refs">
+    <div class="arc-head"><span class="idx">06</span><h2>Sources</h2></div>
+    <div class="links">
+      <a href="https://youtu.be/kCc8FmEb1nY" target="_blank" rel="noopener"><b>The lecture</b><span>Andrej Karpathy, 17 Jan 2023, 1 h 56 min, 7.7M views</span></a>
+      <a href="https://github.com/karpathy/ng-video-lecture" target="_blank" rel="noopener"><b>ng-video-lecture</b><span>bigram.py and gpt.py, the two scripts the lecture ends with</span></a>
+      <a href="https://colab.research.google.com/drive/1JMLa53HDuA-i7ZBmqV7ZnA3c_fvtXnx-?usp=sharing" target="_blank" rel="noopener"><b>The Colab notebook</b><span>the notebook Karpathy types in during the video</span></a>
+      <a href="https://github.com/karpathy/nanoGPT" target="_blank" rel="noopener"><b>nanoGPT</b><span>the same model written for real: batched heads, GPT-2 weights, multi-GPU</span></a>
+      <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener"><b>Attention Is All You Need</b><span>Vaswani et al. 2017, the paper the code follows</span></a>
+      <a href="https://arxiv.org/abs/2005.14165" target="_blank" rel="noopener"><b>Language Models are Few-Shot Learners</b><span>Brown et al. 2020, GPT-3</span></a>
+      <a href="https://www.youtube.com/playlist?list=PLAqhIrjkxbuWI23v9cThsA9GvCAUhRvKZ" target="_blank" rel="noopener"><b>Neural Networks: Zero to Hero</b><span>the series this is the seventh video of; makemore is the assumed background</span></a>
+      <a href="https://idvorkin-ai-tools.github.io/cs336-field-map/" target="_blank" rel="noopener"><b>CS336, mapped</b><span>the full-course version of this: Stanford's Language Modeling from Scratch, 17 lectures</span></a>
+    </div>
+  </section>
+</main>
+<footer>Original explanation of Andrej Karpathy's "Let's build GPT" (2023). The lecture and code are his; this map links, it does not copy. Built 2026-09-05.</footer>
+<script>
+(function(){
+  var KEY='build-gpt-progress';var st={};try{st=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
+  var boxes=document.querySelectorAll('.check');
+  function render(){var n=0;boxes.forEach(function(b){var on=!!st[b.dataset.p];b.classList.toggle('on',on);if(on)n++});
+    var p=document.getElementById('progress');if(p)p.textContent=n?n+' of 8 parts done. Tick a part when you have worked through it; this browser remembers.':'Tick a part when you have worked through it; this browser remembers.'}
+  boxes.forEach(function(b){b.addEventListener('click',function(){st[b.dataset.p]=!st[b.dataset.p];try{localStorage.setItem(KEY,JSON.stringify(st))}catch(e){}render()})});
+  render();
+})();
+</script>
+</body>
+</html>
